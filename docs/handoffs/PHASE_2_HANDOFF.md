@@ -4,7 +4,7 @@
 
 **Completed date:** `2026-10-08`
 
-**Git branch:** `phase-2`
+**Git branch:** `phase-3` (baseline merged via PR #1 into `main`)
 
 ---
 
@@ -53,6 +53,7 @@ Extract the design tokens, visual hierarchy, color palette, typography system, c
 
 ```text
 android-app/gradle/libs.versions.toml
+android-app/gradle/gradle-daemon-jvm.properties
 android-app/app/build.gradle.kts
 android-app/app/src/main/java/com/pocketdl/app/MainActivity.kt
 android-app/app/src/main/java/com/pocketdl/app/ui/theme/Color.kt
@@ -92,12 +93,35 @@ docs/handoffs/PHASE_2_HANDOFF.md
 
 ## 5. Automated Verification
 
-- Compilation & Build: `assembleDebug` passed cleanly.
-- Tests: `Phase2DesignUnitTest` and `FoundationUnitTest` passed cleanly.
+- Compilation & Build: `assembleDebug` passed cleanly (`BUILD SUCCESSFUL in 14s`).
+- Tests: `Phase2DesignUnitTest` and `FoundationUnitTest` passed cleanly (100% pass rate).
+- Icon deprecations: resolved cleanly with `Icons.AutoMirrored.Filled.ListAlt`.
 
 ---
 
-## 6. Known Issues
+## 6. Manual Verification Pass
+
+- **Device Installation:** Installed `app-debug.apk` directly via `adb install -r` to connected Android device (`Streamed Install Success`).
+- **Screen Inventory Verification:**
+  1. `HomeScreen`: Verified Hero URL input bar, extension socket status card, quick action buttons to queue & storage, active transfer card, and captured inbox preview.
+  2. `CapturedScreen`: Verified filter pill badges (`All`, `Video`, `HLS`, `Audio`), "Download All" action, and cards with duration badge overlays and actions.
+  3. `DownloadsScreen`: Verified multi-color segmented storage utilization bar header and download cards list with speed & ETA metrics.
+  4. `QueueScreen`: Verified "Start All" / "Pause All" controls and queue rows with priority drag handles and remove buttons.
+  5. `MediaDetailsScreen`: Verified thumbnail media preview card, URL monospaced specs, and extracted streams table.
+  6. `MediaSnifferScreen`: Verified HTTP 200 OK status badge and monospaced HTTP headers inspector blocks.
+  7. `ExtensionConnectionScreen`: Verified pairing token (`PKT-9482-WIFI`), QR code container, and socket port settings.
+  8. `SettingsScreen`: Verified engine selectors (`Native OkHttp`, `Aria2`, `FFmpeg HLS`), parallel tasks count badge, and cellular data toggle.
+  9. `StorageCleanupScreen`: Verified storage breakdown legend and batch delete triggers.
+- **Bottom Navigation:** Verified 4 primary tabs (`Home`, `Captured`, `Downloads`, `Settings`) with badge counter ("3") on Captured tab. Properly hidden on secondary screens (`queue`, `media_details`, `analysis`, `extension_connection`, `storage_cleanup`).
+- **Modal Interactions:**
+  - `QualitySelectionBottomSheet`: Verified modal bottom sheet with resolution radio options, codec/container indicators, and "Start Download" trigger.
+  - Batch action triggers on `StorageCleanupScreen`.
+- **Visual Comparison with Stitch:** Confirmed dark utility priority, Electric Cyan (`#06B6D4`) primary accent, Emerald Green (`#10B981`) socket accents, Inter UI hierarchy, and JetBrains Mono technical metrics.
+- **Boundary Verification:** Confirmed that no real downloader, extension transport, persistence, background service, HLS, or backend logic was introduced.
+
+---
+
+## 7. Known Issues
 
 | Issue | Severity | Workaround | Follow-up |
 |---|---|---|---|
@@ -105,6 +129,6 @@ docs/handoffs/PHASE_2_HANDOFF.md
 
 ---
 
-## 7. Next Phase Recommendation
+## 8. Next Phase Recommendation
 
-Proceed to **Phase 3 — Screen Shell** to refine individual screen states and viewmodel connections.
+Proceed to **Phase 3 — Screen Shell** to wire ViewModels, UI state holders, and interaction events across the screens.

@@ -12,38 +12,39 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.QrCode
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pocketdl.app.ui.components.BadgeVariant
 import com.pocketdl.app.ui.components.ExtensionStatusCard
 import com.pocketdl.app.ui.components.MetricBadge
 import com.pocketdl.app.ui.components.PocketDLTopAppBar
-import com.pocketdl.app.ui.mock.MockDataProvider
 import com.pocketdl.app.ui.theme.BorderDark
 import com.pocketdl.app.ui.theme.ElectricCyan
-import com.pocketdl.app.ui.theme.EmeraldGreen
 import com.pocketdl.app.ui.theme.MetricLarge
-import com.pocketdl.app.ui.theme.MetricSmall
 import com.pocketdl.app.ui.theme.SurfaceDark
 import com.pocketdl.app.ui.theme.SurfaceHighDark
 import com.pocketdl.app.ui.theme.SurfaceLowDark
@@ -53,14 +54,24 @@ import com.pocketdl.app.ui.theme.TextSecondaryDark
 @Composable
 fun ExtensionConnectionScreen(
     onBackClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    viewModel: ExtensionViewModel = viewModel()
 ) {
-    val status = MockDataProvider.sampleExtensionStatus
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(uiState.userMessage) {
+        uiState.userMessage?.let { msg ->
+            snackbarHostState.showSnackbar(msg)
+            viewModel.onDismissMessage()
+        }
+    }
 
     Scaffold(
         topBar = {
             PocketDLTopAppBar(title = "Extension Socket Pairing", onBackClick = onBackClick)
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = SurfaceDark,
         modifier = modifier
     ) { innerPadding ->
@@ -72,11 +83,13 @@ fun ExtensionConnectionScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Live Status Card
-            ExtensionStatusCard(
-                status = status,
-                onCardClick = {}
-            )
+            // Live Status Card (Click to toggle connect/disconnect mock interaction)
+            uiState.status?.let { status ->
+                ExtensionStatusCard(
+                    status = status,
+                    onCardClick = { viewModel.toggleConnection() }
+                )
+            }
 
             // Pairing Token & QR Code Card
             Card(
@@ -127,8 +140,23 @@ fun ExtensionConnectionScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(text = "Pairing Token:", style = MaterialTheme.typography.bodyMedium, color = TextSecondaryDark)
-                        Text(text = "PKT-9482-WIFI", style = MetricLarge, color = ElectricCyan)
+                        Column {
+                            Text(text = "Pairing Token:", style = MaterialTheme.typography.bodySmall, color = TextSecondaryDark)
+                            Text(text = uiState.pairingToken, style = MetricLarge, color = ElectricCyan)
+                        }
+
+                        Button(
+                            onClick = { viewModel.regenerateToken() },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = SurfaceLowDark,
+                                contentColor = ElectricCyan
+                            ),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Text(text = "New Token", style = MaterialTheme.typography.labelSmall)
+                        }
                     }
                 }
             }
@@ -156,7 +184,7 @@ fun ExtensionConnectionScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(text = "Local Socket Listener Port", style = MaterialTheme.typography.bodyMedium, color = TextPrimaryDark)
-                        MetricBadge(text = "8080", variant = BadgeVariant.CYAN)
+                        MetricBadge(text = "${uiState.status?.listenerPort ?: 8080}", variant = BadgeVariant.CYAN)
                     }
                 }
             }
