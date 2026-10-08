@@ -242,8 +242,8 @@ class InMemoryStorageRepository(
  * Singleton repository provider for in-memory operations across ViewModels.
  */
 object InMemoryRepositoryProvider {
-    val capturedMediaRepository: CapturedMediaRepository = InMemoryCapturedMediaRepository()
-    val downloadRepository: DownloadRepository = InMemoryDownloadRepository()
+    var capturedMediaRepository: CapturedMediaRepository = InMemoryCapturedMediaRepository()
+    var downloadRepository: DownloadRepository = InMemoryDownloadRepository()
     val extensionRepository: ExtensionRepository = InMemoryExtensionRepository()
     val settingsRepository: SettingsRepository = InMemorySettingsRepository()
     val storageRepository: StorageRepository = InMemoryStorageRepository()

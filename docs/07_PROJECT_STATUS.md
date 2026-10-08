@@ -16,9 +16,9 @@
 
 **Primary stack:** Kotlin + Jetpack Compose
 
-**Current Phase:** Phase 3 — Screen State and Interactions / COMPLETED
+**Current Phase:** Phase 4 / 5 — Room Persistence / COMPLETED
 
-**Status:** PHASE 3 COMPLETED. READY FOR NEXT PHASE.
+**Status:** ROOM PERSISTENCE COMPLETED. READY FOR PHASE 6 (DIRECT HTTP DOWNLOAD ENGINE).
 
 **Last updated:** 2026-10-08
 
@@ -130,14 +130,14 @@ pocketdl-native/
 
 ### Git
 
-- Git branch: `phase-3`
+- Git branch: `room-persistence`
 
 ### Android Studio / Gradle
 
 - Installed/configured: **VERIFIED**
 - Gradle build (`assembleDebug`): **VERIFIED SUCCESSFUL**
-- Automated tests (`./gradlew test`): **PASSING (100% pass rate)**
-- Device Run/Verification: **VERIFIED on physical connected device via adb**
+- Automated tests (`./gradlew test`): **PASSING (100% pass rate: Phase3ViewModelStateUnitTest, RoomPersistenceUnitTest)**
+- Device Run/Verification: **VERIFIED on physical connected Samsung Galaxy S22 Ultra via ADB (persistence across app kill confirmed)**
 
 ---
 
@@ -149,9 +149,8 @@ pocketdl-native/
 | 1 | Native Android Foundation | COMPLETED |
 | 2 | Stitch Design System Extraction | COMPLETED |
 | 3 | Screen State & Interactions | COMPLETED |
-| 4 | State & Persistence Integration / Room | NEXT UP |
-| 5 | Room Persistence | READY FOR INTEGRATION |
-| 6 | Direct HTTP Download Engine | NOT STARTED |
+| 4/5 | Room Persistence | COMPLETED |
+| 6 | Direct HTTP Download Engine | NEXT UP |
 | 7 | Background Execution + Notifications | NOT STARTED |
 | 8 | Download Manager Hardening | NOT STARTED |
 | 9 | Extension Capture Protocol | NOT STARTED |
@@ -168,4 +167,4 @@ pocketdl-native/
 
 ## Next Action
 
-Proceed to **Phase 4 / Phase 5 — Room Persistence** (moving in-memory repository backends to Room entities & DAOs without changing UI contracts).
+Proceed to **Phase 6 — Direct HTTP Download Engine** (implementing standalone HTTP file download engine with streaming byte progress, resume with HTTP Range headers, and direct storage output).
