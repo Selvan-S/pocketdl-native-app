@@ -22,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pocketdl.app.ui.mock.StorageUsageMock
 import com.pocketdl.app.ui.theme.BorderDark
@@ -64,12 +65,17 @@ fun StorageBreakdownBar(
                     text = "Storage Utilization",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    color = TextPrimaryDark
+                    color = TextPrimaryDark,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
                 )
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "${String.format("%.1f", usedTotalGb)} GB / ${storage.totalGb.toInt()} GB Used",
                     style = MetricSmall,
-                    color = ElectricCyan
+                    color = ElectricCyan,
+                    maxLines = 1
                 )
             }
 
@@ -108,16 +114,32 @@ fun StorageBreakdownBar(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-            // Legend
+            // Legend with non-squeezing vertical layout
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                StorageLegendItem(color = ElectricCyan, label = "Media Files", value = "${storage.mediaGb} GB")
-                StorageLegendItem(color = SecondaryGreen, label = "App Cache", value = "${storage.appGb} GB")
-                StorageLegendItem(color = TextSecondaryDark, label = "Free Space", value = "${storage.freeGb} GB")
+                StorageLegendItem(
+                    color = ElectricCyan,
+                    label = "Media Files",
+                    value = "${storage.mediaGb} GB",
+                    modifier = Modifier.weight(1f)
+                )
+                StorageLegendItem(
+                    color = SecondaryGreen,
+                    label = "App Cache",
+                    value = "${storage.appGb} GB",
+                    modifier = Modifier.weight(1f)
+                )
+                StorageLegendItem(
+                    color = TextSecondaryDark,
+                    label = "Free Space",
+                    value = "${storage.freeGb} GB",
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
     }
@@ -127,17 +149,34 @@ fun StorageBreakdownBar(
 private fun StorageLegendItem(
     color: androidx.compose.ui.graphics.Color,
     label: String,
-    value: String
+    value: String,
+    modifier: Modifier = Modifier
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .background(color, CircleShape)
+    Column(modifier = modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .background(color, CircleShape)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondaryDark,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = value,
+            style = MetricSmall,
+            color = TextPrimaryDark,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 14.dp)
         )
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(text = label, style = MaterialTheme.typography.bodySmall, color = TextSecondaryDark)
-        Spacer(modifier = Modifier.width(4.dp))
-        Text(text = value, style = MetricSmall, color = TextPrimaryDark)
     }
 }
+
