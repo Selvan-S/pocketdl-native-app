@@ -5,19 +5,18 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 /**
  * Structured database migrations for PocketDL Room database.
+ *
+ * Current database version: 1.
+ * When a future phase introduces schema changes:
+ * 1. Increment [com.pocketdl.app.data.database.PocketDlDatabase] version.
+ * 2. Define the corresponding [Migration] instance here.
+ * 3. Add the migration to [ALL_MIGRATIONS].
  */
 object DatabaseMigrations {
 
     /**
-     * Placeholder migration 1 -> 2 establishing the version migration structure.
+     * All registered migrations for schema upgrades.
+     * Empty at initial schema version 1.
      */
-    val MIGRATION_1_2 = object : Migration(1, 2) {
-        override fun migrate(db: SupportSQLiteDatabase) {
-            // Future schema additions will be defined here incrementally.
-        }
-    }
-
-    val ALL_MIGRATIONS = arrayOf<Migration>(
-        MIGRATION_1_2
-    )
+    val ALL_MIGRATIONS: Array<Migration> = emptyArray()
 }

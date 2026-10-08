@@ -24,7 +24,7 @@ Transition the PocketDL native Android application from volatile in-memory repos
 4. Download binary files/bytes are strictly kept out of Room (reserved for filesystem/MediaStore).
 5. User preferences/settings are kept out of Room (reserved for Jetpack DataStore per ADR-008).
 6. Initial mock data seeds once on clean install without faking persistence on subsequent launches.
-7. Database schema versioning and migration structure (`MIGRATION_1_2`) are scaffolded from the beginning.
+7. Database schema starts at initial version 1 with a clean, extensible migration registry ready for future version increments.
 
 ---
 
@@ -40,7 +40,7 @@ Transition the PocketDL native Android application from volatile in-memory repos
   - Transactional operations: `insertWithVariants`, `deleteById`, `updateStatus`, `retryTask`, `reorderQueue`.
 - **Database & Migrations (`PocketDlDatabase`, `DatabaseMigrations`):**
   - Database name: `"pocketdl.db"`, version 1.
-  - Forward migration structure `MIGRATION_1_2` scaffolded with clear documentation.
+  - Forward migration structure `DatabaseMigrations.ALL_MIGRATIONS` cleanly established; empty at version 1 without premature no-op migrations, and destructive fallback disabled (`fallbackToDestructiveMigration(false)`).
 - **Repository Implementations:**
   - `RoomCapturedMediaRepository`: Implements `CapturedMediaRepository` with first-run seeding and Room DAO queries/mutations.
   - `RoomDownloadRepository`: Implements `DownloadRepository` with first-run seeding, reactive state transitions, and enqueuing directly from captured media.

@@ -41,12 +41,15 @@ abstract class PocketDlDatabase : RoomDatabase() {
         }
 
         private fun buildDatabase(context: Context): PocketDlDatabase {
-            return Room.databaseBuilder(
+            val builder = Room.databaseBuilder(
                 context,
                 PocketDlDatabase::class.java,
                 DATABASE_NAME
             )
-                .addMigrations(*DatabaseMigrations.ALL_MIGRATIONS)
+            if (DatabaseMigrations.ALL_MIGRATIONS.isNotEmpty()) {
+                builder.addMigrations(*DatabaseMigrations.ALL_MIGRATIONS)
+            }
+            return builder
                 .fallbackToDestructiveMigration(false)
                 .build()
         }
