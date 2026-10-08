@@ -1,6 +1,8 @@
 package com.pocketdl.app.ui.screens.captured
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,34 +16,33 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pocketdl.app.ui.components.BadgeVariant
 import com.pocketdl.app.ui.components.MediaItemCard
 import com.pocketdl.app.ui.components.MetricBadge
 import com.pocketdl.app.ui.components.PocketDLTopAppBar
 import com.pocketdl.app.ui.components.QualitySelectionBottomSheet
-import com.pocketdl.app.ui.mock.MockDataProvider
 import com.pocketdl.app.ui.theme.ElectricCyan
 import com.pocketdl.app.ui.theme.SurfaceDark
-import com.pocketdl.app.ui.theme.TextPrimaryDark
 import com.pocketdl.app.ui.theme.TextSecondaryDark
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -49,17 +50,25 @@ import com.pocketdl.app.ui.theme.TextSecondaryDark
 fun CapturedScreen(
     onMediaSelected: (String) -> Unit,
     onNavigateToAnalysis: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    viewModel: CapturedViewModel = viewModel()
 ) {
-    val capturedItems = MockDataProvider.sampleCapturedList
-    val qualityOptions = MockDataProvider.sampleQualityOptions
-    var showQualitySheet by remember { mutableStateOf(false) }
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val sheetState = rememberModalBottomSheetState()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(uiState.userMessage) {
+        uiState.userMessage?.let { msg ->
+            snackbarHostState.showSnackbar(msg)
+            viewModel.onDismissMessage()
+        }
+    }
 
     Scaffold(
         topBar = {
             PocketDLTopAppBar(title = "Captured Media Inbox")
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = SurfaceDark,
         modifier = modifier
     ) { innerPadding ->
@@ -81,14 +90,30 @@ fun CapturedScreen(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    MetricBadge(text = "All (${capturedItems.size})", variant = BadgeVariant.CYAN)
-                    MetricBadge(text = "Video", variant = BadgeVariant.DEFAULT)
-                    MetricBadge(text = "HLS", variant = BadgeVariant.DEFAULT)
-                    MetricBadge(text = "Audio", variant = BadgeVariant.DEFAULT)
+                    MetricBadge(
+                        text = "All (${uiState.totalCount})",
+                        variant = if (uiState.filter == CapturedFilter.ALL) BadgeVariant.CYAN else BadgeVariant.DEFAULT,
+                        modifier = Modifier.clickable { viewModel.onFilterSelected(CapturedFilter.ALL) }
+                    )
+                    MetricBadge(
+                        text = "Video (${uiState.videoCount})",
+                        variant = if (uiState.filter == CapturedFilter.VIDEO) BadgeVariant.CYAN else BadgeVariant.DEFAULT,
+                        modifier = Modifier.clickable { viewModel.onFilterSelected(CapturedFilter.VIDEO) }
+                    )
+                    MetricBadge(
+                        text = "HLS (${uiState.hlsCount})",
+                        variant = if (uiState.filter == CapturedFilter.HLS) BadgeVariant.CYAN else BadgeVariant.DEFAULT,
+                        modifier = Modifier.clickable { viewModel.onFilterSelected(CapturedFilter.HLS) }
+                    )
+                    MetricBadge(
+                        text = "Audio (${uiState.audioCount})",
+                        variant = if (uiState.filter == CapturedFilter.AUDIO) BadgeVariant.CYAN else BadgeVariant.DEFAULT,
+                        modifier = Modifier.clickable { viewModel.onFilterSelected(CapturedFilter.AUDIO) }
+                    )
                 }
 
                 Button(
-                    onClick = { showQualitySheet = true },
+                    onClick = { viewModel.onDownloadAllClick() },
                     shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = ElectricCyan,
@@ -104,28 +129,43 @@ fun CapturedScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(capturedItems, key = { it.id }) { media ->
-                    MediaItemCard(
-                        item = media,
-                        onDownloadClick = { onMediaSelected(media.id) },
-                        onQualityClick = { showQualitySheet = true },
-                        onSniffClick = { onNavigateToAnalysis(media.id) },
-                        onDeleteClick = {}
+            if (uiState.items.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(top = 40.dp),
+                    contentAlignment = Alignment.TopCenter
+                ) {
+                    Text(
+                        text = "No media items found for '${uiState.filter.label}' filter.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextSecondaryDark
                     )
+                }
+            } else {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(uiState.items, key = { it.id }) { media ->
+                        MediaItemCard(
+                            item = media,
+                            onDownloadClick = { onMediaSelected(media.id) },
+                            onQualityClick = { viewModel.onOpenQualitySheet(media) },
+                            onSniffClick = { onNavigateToAnalysis(media.id) },
+                            onDeleteClick = { viewModel.onDeleteCaptured(media.id) }
+                        )
+                    }
                 }
             }
         }
 
-        if (showQualitySheet) {
+        if (uiState.showQualitySheet) {
             QualitySelectionBottomSheet(
                 sheetState = sheetState,
-                options = qualityOptions,
-                onDismissRequest = { showQualitySheet = false },
+                options = uiState.qualityOptions,
+                onDismissRequest = { viewModel.onDismissQualitySheet() },
                 onConfirmQuality = { selectedOption ->
-                    showQualitySheet = false
+                    viewModel.onConfirmQuality(selectedOption)
                 }
             )
         }

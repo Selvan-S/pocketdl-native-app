@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.pocketdl.app.data.repository.InMemoryRepositoryProvider
 import com.pocketdl.app.ui.components.PocketDLBottomBar
 import com.pocketdl.app.ui.navigation.AppNavHost
 import com.pocketdl.app.ui.navigation.Screen
@@ -35,11 +37,16 @@ class MainActivity : ComponentActivity() {
 
                 val showBottomBar = currentRoute in topLevelRoutes
 
+                val capturedItems by InMemoryRepositoryProvider.capturedMediaRepository
+                    .observeCapturedMedia()
+                    .collectAsStateWithLifecycle(initialValue = emptyList())
+
                 Scaffold(
                     bottomBar = {
                         if (showBottomBar) {
                             PocketDLBottomBar(
                                 currentRoute = currentRoute,
+                                capturedBadgeCount = capturedItems.size,
                                 onNavigate = { route ->
                                     if (currentRoute != route) {
                                         navController.navigate(route) {
