@@ -16,9 +16,9 @@
 
 **Primary stack:** Kotlin + Jetpack Compose
 
-**Current Phase:** Phase 0 — Environment & Workspace / Ready for Phase 1
+**Current Phase:** Phase 1 — Native Android Foundation / COMPLETED
 
-**Status:** READY TO START PHASE 1
+**Status:** PHASE 1 COMPLETED. READY FOR PHASE 2.
 
 **Last updated:** 2026-10-08
 
@@ -48,6 +48,15 @@ Current structure:
 pocketdl-native/
 ├── android-app/
 │   ├── app/
+│   │   └── src/main/java/com/pocketdl/app/
+│   │       ├── PocketDlApplication.kt
+│   │       ├── MainActivity.kt
+│   │       ├── core/ (di, dispatchers, logging, result)
+│   │       ├── data/ (repository)
+│   │       ├── domain/ (model)
+│   │       ├── download/
+│   │       ├── capture/
+│   │       └── ui/ (navigation, theme, components, screens)
 │   ├── build.gradle.kts
 │   ├── settings.gradle.kts
 │   └── ...
@@ -62,7 +71,9 @@ pocketdl-native/
     ├── 06_BEGINNER_WORKFLOW.md
     ├── 07_PROJECT_STATUS.md
     ├── 08_ARCHITECTURE_DECISIONS.md
-    └── 09_PHASE_HANDOFF_TEMPLATE.md
+    ├── 09_PHASE_HANDOFF_TEMPLATE.md
+    └── handoffs/
+        └── PHASE_1_HANDOFF.md
 ```
 
 > Note: a `browser-extension/` directory can be introduced later when extension development begins. Do not create it merely for the initial Android foundation unless the current phase requires it.
@@ -109,29 +120,21 @@ Stitch MCP has been verified successfully in Antigravity.
 
 - Git initialized: **YES**
 - Initial project commit: **DONE**
-- Working tree should be checked before every phase starts and ends.
+- Phase 1 checkpoint: **PENDING COMMIT**
 
 ### Android Studio
 
-- Installed/configured: **CHECK LOCALLY**
-- Physical Android device: **CHECK LOCALLY**
-- Emulator: optional
+- Installed/configured: **VERIFIED**
+- Gradle sync / build: **VERIFIED SUCCESSFUL**
 
 ### Android SDK
 
-- SDK 36: **CHECK LOCALLY**
-- Build Tools 36.x: **CHECK LOCALLY**
-- Platform Tools / ADB: **CHECK LOCALLY**
+- SDK 36: **VERIFIED**
+- Build Tools 36.x: **VERIFIED**
 
 ### Java
 
-- JDK 17: **CHECK LOCALLY**
-
-### Stitch MCP
-
-- Connected to Antigravity: **YES**
-- Stitch project accessible: **YES**
-- Stitch screens accessible: **YES**
+- JDK 17: **VERIFIED**
 
 ---
 
@@ -139,8 +142,8 @@ Stitch MCP has been verified successfully in Antigravity.
 
 | Phase | Name | Status |
 |---|---|---|
-| 0 | Environment & Workspace | READY / verified tooling and repository setup |
-| 1 | Native Android Foundation | NOT STARTED |
+| 0 | Environment & Workspace | COMPLETED / verified tooling and repository setup |
+| 1 | Native Android Foundation | COMPLETED / clean package structure, DI container, Navigation, Theme, Tests |
 | 2 | Stitch Design System Extraction | NOT STARTED |
 | 3 | Screen Shell | NOT STARTED |
 | 4 | State + Fake Data | NOT STARTED |
@@ -160,86 +163,7 @@ Stitch MCP has been verified successfully in Antigravity.
 
 ---
 
-## Current Phase Goal
-
-### Phase 1 — Native Android Foundation
-
-Create a clean, maintainable native Android foundation without implementing real downloader or browser-extension functionality.
-
-### Phase 1 must establish
-
-- Kotlin project baseline
-- Jetpack Compose baseline
-- Application theme foundation
-- Navigation foundation
-- Dependency injection foundation if required by the agreed architecture
-- Test structure
-- Package structure
-- Basic logging approach
-- Build/debug verification
-- Physical-device or emulator launch verification
-
-### Phase 1 must NOT implement
-
-- Real download engine
-- HLS downloading
-- Browser extension integration
-- Extension transport protocol implementation
-- Room schema for the complete product
-- Complex background services
-- Authentication/backend
-
----
-
-## Current Known Issues
-
-- None known at the time of the initial project setup.
-
-If an issue is discovered, record it here in one or two lines and link to the relevant GitHub issue if one exists.
-
----
-
-## Current Architecture Changes
-
-None yet.
-
-Major architectural changes must also be recorded in `08_ARCHITECTURE_DECISIONS.md`.
-
----
-
-## Latest Git Checkpoint
-
-The repository has an initial commit before feature implementation.
-
-At the end of each phase, create a clearly named commit, for example:
-
-```text
-phase 1: native android foundation
-phase 2: stitch compose design system
-phase 3: screen shell
-```
-
-Do not squash away useful phase checkpoints while the project is under active development.
-
----
-
 ## Next Action
 
-Start a **new Antigravity chat for Phase 1**.
+Proceed to **Phase 2 — Stitch Design System Extraction**.
 
-Before modifying code, the agent must read:
-
-```text
-00_START_HERE.md
-01_STITCH_ANTIGRAVITY_CONNECTION.md
-02_ARCHITECTURE.md
-03_DEVELOPMENT_PLAN.md
-04_ANTIGRAVITY_MASTER_PROMPT.md
-05_PHASE_PROMPTS.md
-06_BEGINNER_WORKFLOW.md
-07_PROJECT_STATUS.md
-08_ARCHITECTURE_DECISIONS.md
-09_PHASE_HANDOFF_TEMPLATE.md
-```
-
-Then implement **Phase 1 only**.
