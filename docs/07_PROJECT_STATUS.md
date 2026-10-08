@@ -16,9 +16,9 @@
 
 **Primary stack:** Kotlin + Jetpack Compose
 
-**Current Phase:** Phase 1 — Native Android Foundation / COMPLETED
+**Current Phase:** Phase 2 — Stitch Design System Extraction / COMPLETED
 
-**Status:** PHASE 1 COMPLETED. READY FOR PHASE 2.
+**Status:** PHASE 2 COMPLETED. READY FOR PHASE 3.
 
 **Last updated:** 2026-10-08
 
@@ -56,7 +56,12 @@ pocketdl-native/
 │   │       ├── domain/ (model)
 │   │       ├── download/
 │   │       ├── capture/
-│   │       └── ui/ (navigation, theme, components, screens)
+│   │       └── ui/
+│   │           ├── components/ (PocketDLTopAppBar, PocketDLBottomBar, MetricBadge, MediaItemCard, DownloadProgressCard, QueueItemRow, ExtensionStatusCard, StorageBreakdownBar, QualitySelectionBottomSheet, UrlInputField)
+│   │           ├── mock/ (MockData.kt)
+│   │           ├── navigation/ (Screen.kt, AppNavHost.kt)
+│   │           ├── screens/ (home, captured, downloads, queue, media_details, analysis, extension, settings, storage)
+│   │           └── theme/ (Color.kt, Dimensions.kt, Shapes.kt, Theme.kt, Type.kt)
 │   ├── build.gradle.kts
 │   ├── settings.gradle.kts
 │   └── ...
@@ -72,11 +77,11 @@ pocketdl-native/
     ├── 07_PROJECT_STATUS.md
     ├── 08_ARCHITECTURE_DECISIONS.md
     ├── 09_PHASE_HANDOFF_TEMPLATE.md
+    ├── DESIGN.md
     └── handoffs/
-        └── PHASE_1_HANDOFF.md
+        ├── PHASE_1_HANDOFF.md
+        └── PHASE_2_HANDOFF.md
 ```
-
-> Note: a `browser-extension/` directory can be introduced later when extension development begins. Do not create it merely for the initial Android foundation unless the current phase requires it.
 
 ---
 
@@ -84,33 +89,25 @@ pocketdl-native/
 
 **Stitch project:** Accessible through Stitch MCP.
 
-**Project:** `PocketDL Companion App Design`
+**Project:** `PocketDL Companion App Design` (ID: `502327910935149531`)
 
 **Design system:** `PocketDL Dark Utility`
 
-**Known design direction:**
+**Extracted Design Tokens & Components:** Documented in `docs/DESIGN.md`.
 
-- Dark-mode-first utility application
-- Electric Cyan `#06B6D4` primary accent
-- Emerald Green `#10B981` secondary accent
-- Inter / JetBrains Mono typography
+**Implemented Screen Shells:**
 
-**Known Stitch designs:**
+1. `HomeScreen` (Screen 1: PocketDL - Home Dashboard)
+2. `CapturedScreen` (Screen 2: PocketDL - Captured Media)
+3. `DownloadsScreen` (Screen 3: PocketDL - Downloads Library)
+4. `QueueScreen` (Screen 4: PocketDL - Download Queue)
+5. `MediaDetailsScreen` (Screen 5: PocketDL - Media Detail & Quality)
+6. `MediaSnifferScreen` (Screen 6: PocketDL - Media Sniffer Analysis)
+7. `ExtensionConnectionScreen` (Screen 7: PocketDL - Extension Connection)
+8. `SettingsScreen` (Screen 8: PocketDL - Settings & Engine Preferences)
+9. `StorageCleanupScreen` (Screen 9: PocketDL - Batch Edit & Storage Cleanup)
 
-1. PocketDL - Home Dashboard
-2. PocketDL - Captured Media
-3. PocketDL - Downloads Library
-4. PocketDL - Download Queue
-5. PocketDL - Media Detail & Quality
-6. PocketDL - Media Sniffer Analysis
-7. PocketDL - Extension Connection
-8. PocketDL - Settings & Engine Preferences
-9. PocketDL - Batch Edit & Storage Cleanup
-10. PocketDL - Browser Extension Popup
-
-The first nine are mobile-oriented app designs; the browser extension popup is a separate desktop-oriented design.
-
-Stitch MCP has been verified successfully in Antigravity.
+*Screen 10 (Browser Extension Popup) is intentionally separated and NOT built in the Android Compose application.*
 
 ---
 
@@ -118,23 +115,14 @@ Stitch MCP has been verified successfully in Antigravity.
 
 ### Git
 
-- Git initialized: **YES**
-- Initial project commit: **DONE**
-- Phase 1 checkpoint: **PENDING COMMIT**
+- Git branch: `phase-2`
+- Git commit baseline: `7b06169`
 
-### Android Studio
+### Android Studio / Gradle
 
 - Installed/configured: **VERIFIED**
-- Gradle sync / build: **VERIFIED SUCCESSFUL**
-
-### Android SDK
-
-- SDK 36: **VERIFIED**
-- Build Tools 36.x: **VERIFIED**
-
-### Java
-
-- JDK 17: **VERIFIED**
+- Gradle build (`assembleDebug`): **VERIFIED SUCCESSFUL**
+- Automated tests (`./gradlew test`): **PASSING**
 
 ---
 
@@ -142,9 +130,9 @@ Stitch MCP has been verified successfully in Antigravity.
 
 | Phase | Name | Status |
 |---|---|---|
-| 0 | Environment & Workspace | COMPLETED / verified tooling and repository setup |
-| 1 | Native Android Foundation | COMPLETED / clean package structure, DI container, Navigation, Theme, Tests |
-| 2 | Stitch Design System Extraction | NOT STARTED |
+| 0 | Environment & Workspace | COMPLETED |
+| 1 | Native Android Foundation | COMPLETED |
+| 2 | Stitch Design System Extraction | COMPLETED |
 | 3 | Screen Shell | NOT STARTED |
 | 4 | State + Fake Data | NOT STARTED |
 | 5 | Room Persistence | NOT STARTED |
@@ -165,5 +153,4 @@ Stitch MCP has been verified successfully in Antigravity.
 
 ## Next Action
 
-Proceed to **Phase 2 — Stitch Design System Extraction**.
-
+Proceed to **Phase 3 — Screen Shell**.
