@@ -213,7 +213,13 @@ fun MediaDetailsScreen(
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Button(
-                            onClick = { viewModel.onOpenQualitySheet() },
+                            onClick = {
+                                val selectedOption = uiState.options.firstOrNull { it.id == uiState.selectedOptionId }
+                                    ?: uiState.options.firstOrNull()
+                                if (selectedOption != null) {
+                                    viewModel.onConfirmDownload(selectedOption)
+                                }
+                            },
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = ElectricCyan, contentColor = SurfaceDark),
                             modifier = Modifier.weight(1f).height(48.dp)

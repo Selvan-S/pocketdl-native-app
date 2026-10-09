@@ -1,5 +1,7 @@
 package com.pocketdl.app
 
+import com.pocketdl.app.data.database.toDomain
+import com.pocketdl.app.data.database.toEntity
 import com.pocketdl.app.data.repository.DownloadEngineType
 import com.pocketdl.app.data.repository.InMemoryCapturedMediaRepository
 import com.pocketdl.app.data.repository.InMemoryDownloadRepository
@@ -275,5 +277,36 @@ class Phase3ViewModelStateUnitTest {
 
         assertTrue(viewModel.uiState.value.downloadEnqueued)
         assertNotNull(viewModel.uiState.value.feedbackMessage)
+    }
+
+    @Test
+    fun downloadTaskMapping_preservesLocalPathAndSourceUrl() {
+        val entity = com.pocketdl.app.data.database.entity.DownloadTaskEntity(
+            id = "task_test_path",
+            title = "Test Video",
+            sourceDomain = "example.com",
+            sourceUrl = "https://example.com/video.mp4",
+            status = TaskStatus.COMPLETED.name,
+            statusText = "Completed",
+            progress = 1.0f,
+            downloadedSizeText = "15 MB",
+            totalSizeText = "15 MB",
+            speedText = "0 KB/s",
+            etaText = "Done",
+            resolutionBadge = "1080p",
+            codecBadge = "H.264",
+            localPath = "/storage/emulated/0/Android/data/com.pocketdl.app/files/Download/PocketDL/Test_Video.mp4",
+            createdAt = 1000L,
+            completedAt = 2000L
+        )
+
+        val domain = entity.toDomain()
+        assertEquals("/storage/emulated/0/Android/data/com.pocketdl.app/files/Download/PocketDL/Test_Video.mp4", domain.localPath)
+        assertEquals("https://example.com/video.mp4", domain.sourceUrl)
+        assertEquals(TaskStatus.COMPLETED, domain.status)
+
+        val reEntity = domain.toEntity()
+        assertEquals(domain.localPath, reEntity.localPath)
+        assertEquals(domain.sourceUrl, reEntity.sourceUrl)
     }
 }

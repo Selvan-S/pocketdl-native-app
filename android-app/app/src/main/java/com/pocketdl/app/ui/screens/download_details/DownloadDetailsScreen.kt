@@ -217,8 +217,9 @@ fun DownloadDetailsScreen(
 
                             Text(text = "Local Destination:", style = MaterialTheme.typography.bodySmall, color = TextSecondaryDark)
                             Spacer(modifier = Modifier.height(4.dp))
+                            val destinationText = task.localPath ?: "Pending download..."
                             Text(
-                                text = "/storage/emulated/0/Download/PocketDL/${task.title.take(24).replace(" ", "_")}.mp4",
+                                text = destinationText,
                                 style = MetricSmall,
                                 color = ElectricCyan,
                                 modifier = Modifier
@@ -226,6 +227,21 @@ fun DownloadDetailsScreen(
                                     .background(SurfaceHighDark, RoundedCornerShape(8.dp))
                                     .padding(10.dp)
                             )
+
+                            if (task.sourceUrl.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(text = "Source URL:", style = MaterialTheme.typography.bodySmall, color = TextSecondaryDark)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = task.sourceUrl,
+                                    style = MetricSmall,
+                                    color = ElectricCyan,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(SurfaceHighDark, RoundedCornerShape(8.dp))
+                                        .padding(10.dp)
+                                )
+                            }
                         }
                     }
 

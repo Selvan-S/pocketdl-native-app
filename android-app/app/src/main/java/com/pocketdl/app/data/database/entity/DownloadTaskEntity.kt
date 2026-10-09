@@ -65,5 +65,11 @@ data class DownloadTaskEntity(
     val createdAt: Long = System.currentTimeMillis(),
 
     @ColumnInfo(name = "completed_at")
-    val completedAt: Long? = null
+    val completedAt: Long? = null,
+
+    @ColumnInfo(name = "etag")
+    val etag: String? = null,
+
+    @ColumnInfo(name = "last_modified")
+    val lastModified: String? = null
 )
