@@ -41,6 +41,25 @@ interface DownloadTaskDao {
     @Query("UPDATE download_tasks SET status = :status, status_text = :statusText, progress = :progress, speed_text = :speedText, eta_text = :etaText WHERE id = :id")
     suspend fun retryTask(id: String, status: String, statusText: String, progress: Float, speedText: String, etaText: String)
 
+    @Query("SELECT * FROM download_tasks WHERE status = 'QUEUED' ORDER BY created_at ASC LIMIT :limit")
+    suspend fun findOldestQueued(limit: Int): List<DownloadTaskEntity>
+
+    @Query("UPDATE download_tasks SET status = :status, status_text = :statusText, progress = :progress, downloaded_size_text = :downloadedSizeText, total_size_text = :totalSizeText, speed_text = :speedText, eta_text = :etaText, local_path = COALESCE(:localPath, local_path), etag = COALESCE(:etag, etag), last_modified = COALESCE(:lastModified, last_modified), completed_at = COALESCE(:completedAt, completed_at) WHERE id = :id")
+    suspend fun updateProgress(
+        id: String,
+        status: String,
+        statusText: String,
+        progress: Float,
+        downloadedSizeText: String,
+        totalSizeText: String,
+        speedText: String,
+        etaText: String,
+        localPath: String? = null,
+        etag: String? = null,
+        lastModified: String? = null,
+        completedAt: Long? = null
+    )
+
     @Query("DELETE FROM download_tasks WHERE id = :id")
     suspend fun deleteById(id: String)
 

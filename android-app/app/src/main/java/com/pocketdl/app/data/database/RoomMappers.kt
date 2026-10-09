@@ -56,16 +56,20 @@ fun DownloadTaskEntity.toDomain(): DownloadTaskMock {
         speedText = speedText,
         etaText = etaText,
         resolutionBadge = resolutionBadge,
-        codecBadge = codecBadge
+        codecBadge = codecBadge,
+        localPath = localPath,
+        sourceUrl = sourceUrl
     )
 }
 
 fun DownloadTaskMock.toEntity(
     capturedMediaId: String? = null,
-    sourceUrl: String = "",
-    localPath: String? = null,
+    sourceUrl: String = this.sourceUrl,
+    localPath: String? = this.localPath,
     createdAt: Long = System.currentTimeMillis(),
-    completedAt: Long? = null
+    completedAt: Long? = null,
+    etag: String? = null,
+    lastModified: String? = null
 ): DownloadTaskEntity = DownloadTaskEntity(
     id = id,
     capturedMediaId = capturedMediaId,
@@ -83,7 +87,9 @@ fun DownloadTaskMock.toEntity(
     codecBadge = codecBadge,
     localPath = localPath,
     createdAt = createdAt,
-    completedAt = completedAt
+    completedAt = completedAt,
+    etag = etag,
+    lastModified = lastModified
 )
 
 fun MediaVariantEntity.toDomain(): QualityOptionMock = QualityOptionMock(

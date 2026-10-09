@@ -152,9 +152,10 @@ class RoomPersistenceUnitTest {
     }
 
     @Test
-    fun databaseMigrations_structureIsCleanForVersion1() {
-        // At database version 1, no migrations should be active or registered yet
+    fun databaseMigrations_structureRegistersMigration1To2() {
         assertNotNull(DatabaseMigrations.ALL_MIGRATIONS)
-        assertEquals(0, DatabaseMigrations.ALL_MIGRATIONS.size)
+        assertEquals(1, DatabaseMigrations.ALL_MIGRATIONS.size)
+        assertEquals(1, DatabaseMigrations.MIGRATION_1_2.startVersion)
+        assertEquals(2, DatabaseMigrations.MIGRATION_1_2.endVersion)
     }
 }

@@ -1,6 +1,7 @@
 package com.pocketdl.app.core.di
 
 import android.content.Context
+import android.os.Environment
 import com.pocketdl.app.core.dispatchers.DefaultDispatcherProvider
 import com.pocketdl.app.core.dispatchers.DispatcherProvider
 import com.pocketdl.app.data.database.PocketDlDatabase
@@ -12,6 +13,13 @@ import com.pocketdl.app.data.repository.RoomCapturedMediaRepository
 import com.pocketdl.app.data.repository.RoomDownloadRepository
 import com.pocketdl.app.data.repository.SettingsRepository
 import com.pocketdl.app.data.repository.StorageRepository
+import com.pocketdl.app.download.DownloadCoordinator
+import com.pocketdl.app.download.DownloadEngine
+import com.pocketdl.app.download.OkHttpDownloadEngine
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import okhttp3.OkHttpClient
+import java.io.File
 
 /**
  * Dependency Injection container interface providing application-level dependencies.
@@ -23,6 +31,8 @@ interface AppContainer {
     val extensionRepository: ExtensionRepository
     val settingsRepository: SettingsRepository
     val storageRepository: StorageRepository
+    val downloadEngine: DownloadEngine
+    val downloadCoordinator: DownloadCoordinator
 }
 
 /**
@@ -40,6 +50,40 @@ class DefaultAppContainer(
         DefaultDispatcherProvider()
     }
 
+    private val okHttpClient: OkHttpClient by lazy {
+        OkHttpDownloadEngine.defaultClient()
+    }
+
+    override val downloadEngine: DownloadEngine by lazy {
+        OkHttpDownloadEngine(
+            client = okHttpClient,
+            ioDispatcher = dispatchers.io
+        )
+    }
+
+    override val settingsRepository: SettingsRepository by lazy {
+        InMemoryRepositoryProvider.settingsRepository
+    }
+
+    override val downloadCoordinator: DownloadCoordinator by lazy {
+        DownloadCoordinator(
+            engine = downloadEngine,
+            downloadTaskDao = database.downloadTaskDao(),
+            settingsRepository = settingsRepository,
+            destinationDirProvider = {
+                val base = applicationContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                    ?: File(applicationContext.filesDir, "downloads")
+                val targetDir = File(base, "PocketDL")
+                if (!targetDir.exists()) {
+                    targetDir.mkdirs()
+                }
+                targetDir
+            },
+            coordinatorScope = CoroutineScope(SupervisorJob() + dispatchers.io),
+            ioDispatcher = dispatchers.io
+        )
+    }
+
     override val capturedMediaRepository: CapturedMediaRepository by lazy {
         RoomCapturedMediaRepository(
             capturedMediaDao = database.capturedMediaDao(),
@@ -50,6 +94,7 @@ class DefaultAppContainer(
     override val downloadRepository: DownloadRepository by lazy {
         RoomDownloadRepository(
             downloadTaskDao = database.downloadTaskDao(),
+            coordinator = downloadCoordinator,
             ioDispatcher = dispatchers.io
         )
     }
@@ -58,12 +103,7 @@ class DefaultAppContainer(
         InMemoryRepositoryProvider.extensionRepository
     }
 
-    override val settingsRepository: SettingsRepository by lazy {
-        InMemoryRepositoryProvider.settingsRepository
-    }
-
     override val storageRepository: StorageRepository by lazy {
         InMemoryRepositoryProvider.storageRepository
     }
 }
-

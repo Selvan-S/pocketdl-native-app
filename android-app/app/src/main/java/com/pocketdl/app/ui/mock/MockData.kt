@@ -25,7 +25,9 @@ data class DownloadTaskMock(
     val speedText: String,
     val etaText: String,
     val resolutionBadge: String,
-    val codecBadge: String
+    val codecBadge: String,
+    val localPath: String? = null,
+    val sourceUrl: String = ""
 )
 
 enum class TaskStatus {
