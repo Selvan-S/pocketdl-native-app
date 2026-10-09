@@ -165,6 +165,139 @@ class DownloadCoordinatorUnitTest {
         assertTrue(coordinator.isRunning("t2"))
     }
 
+    @Test
+    fun startupReconciliation_reconcilesOnlyDownloadingTasksToPaused() = runTest(testDispatcher) {
+        val downloadingTask = createTask("dl1").copy(
+            status = TaskStatus.DOWNLOADING.name,
+            statusText = "Downloading",
+            progress = 0.65f,
+            downloadedSizeText = "65 MB",
+            totalSizeText = "100 MB",
+            speedText = "15 MB/s",
+            etaText = "00:20",
+            localPath = "/downloads/sample_dl1.mp4",
+            etag = "\"etag_123\"",
+            lastModified = "Wed, 21 Oct 2025 07:28:00 GMT"
+        )
+        val queuedTask = createTask("q1").copy(status = TaskStatus.QUEUED.name)
+        val completedTask = createTask("c1").copy(status = TaskStatus.COMPLETED.name, progress = 1f)
+        val failedTask = createTask("f1").copy(status = TaskStatus.FAILED.name, statusText = "Failed: 403")
+
+        val freshDao = FakeDownloadTaskDao()
+        freshDao.insertAll(listOf(downloadingTask, queuedTask, completedTask, failedTask))
+
+        val startupCoordinator = DownloadCoordinator(
+            engine = fakeEngine,
+            downloadTaskDao = freshDao,
+            settingsRepository = settingsRepo,
+            destinationDirProvider = { tempDir },
+            coordinatorScope = testScope,
+            ioDispatcher = testDispatcher
+        )
+
+        // Barrier completes
+        startupCoordinator.ensureInitialized()
+        advanceUntilIdle()
+
+        // 1. DOWNLOADING task transitioned to PAUSED with reset speed/ETA
+        val reconciled = freshDao.findById("dl1")
+        assertEquals(TaskStatus.PAUSED.name, reconciled?.status)
+        assertEquals("Paused", reconciled?.statusText)
+        assertEquals("0 KB/s", reconciled?.speedText)
+        assertEquals("Paused", reconciled?.etaText)
+
+        // 2. Metadata strictly preserved
+        assertEquals(0.65f, reconciled?.progress)
+        assertEquals("65 MB", reconciled?.downloadedSizeText)
+        assertEquals("100 MB", reconciled?.totalSizeText)
+        assertEquals("/downloads/sample_dl1.mp4", reconciled?.localPath)
+        assertEquals("\"etag_123\"", reconciled?.etag)
+        assertEquals("Wed, 21 Oct 2025 07:28:00 GMT", reconciled?.lastModified)
+
+        // 3. Other statuses remain completely untouched
+        assertEquals(TaskStatus.QUEUED.name, freshDao.findById("q1")?.status)
+        assertEquals(TaskStatus.COMPLETED.name, freshDao.findById("c1")?.status)
+        assertEquals(TaskStatus.FAILED.name, freshDao.findById("f1")?.status)
+    }
+
+    @Test
+    fun destinationFile_persistedInRoomBeforeEngineCompletes() = runTest(testDispatcher) {
+        val task = createTask("t_dest").copy(title = "Documentary Episode 1")
+        fakeDao.insert(task)
+
+        coordinator.startTask("t_dest")
+        advanceUntilIdle()
+
+        val updatedTask = fakeDao.findById("t_dest")
+        val expectedDest = DownloadFileUtils.resolveDestinationFile(tempDir, "Documentary Episode 1", "t_dest")
+
+        assertEquals(expectedDest.absolutePath, updatedTask?.localPath)
+        assertEquals(expectedDest, fakeEngine.destinationFiles["t_dest"])
+    }
+
+    @Test
+    fun collisionSafety_sameTitleTasksHaveDistinctFilesAndPartFiles() = runTest(testDispatcher) {
+        val taskA = createTask("task_A").copy(title = "Popular Clip")
+        val taskB = createTask("task_B").copy(title = "Popular Clip")
+        fakeDao.insertAll(listOf(taskA, taskB))
+
+        coordinator.startTask("task_A")
+        coordinator.startTask("task_B")
+        advanceUntilIdle()
+
+        val fileA = fakeEngine.destinationFiles["task_A"]
+        val fileB = fakeEngine.destinationFiles["task_B"]
+
+        assertTrue("Files must not be null", fileA != null && fileB != null)
+        assertFalse("Destination files must be distinct", fileA == fileB)
+
+        val partA = DownloadFileUtils.resolvePartFile(fileA!!)
+        val partB = DownloadFileUtils.resolvePartFile(fileB!!)
+        assertFalse("Part files must be distinct", partA == partB)
+        assertEquals(fileA.absolutePath, fakeDao.findById("task_A")?.localPath)
+        assertEquals(fileB.absolutePath, fakeDao.findById("task_B")?.localPath)
+    }
+
+    @Test
+    fun resumeTask_reusesPersistedDestinationPath() = runTest(testDispatcher) {
+        val customSavedFile = File(tempDir, "Custom_Saved_Name_custom.mp4")
+        val task = createTask("t_resume").copy(
+            status = TaskStatus.PAUSED.name,
+            localPath = customSavedFile.absolutePath
+        )
+        fakeDao.insert(task)
+
+        coordinator.startTask("t_resume")
+        advanceUntilIdle()
+
+        val passedDest = fakeEngine.destinationFiles["t_resume"]
+        assertEquals(customSavedFile.absolutePath, passedDest?.absolutePath)
+        assertEquals(customSavedFile.absolutePath, fakeDao.findById("t_resume")?.localPath)
+    }
+
+    @Test
+    fun cancelTask_cleansOnlyTaskSpecificPartFile() = runTest(testDispatcher) {
+        val fileA = DownloadFileUtils.resolveDestinationFile(tempDir, "Common Title", "task_A")
+        val partA = DownloadFileUtils.resolvePartFile(fileA).apply { writeText("partial data A") }
+
+        val fileB = DownloadFileUtils.resolveDestinationFile(tempDir, "Common Title", "task_B")
+        val partB = DownloadFileUtils.resolvePartFile(fileB).apply { writeText("partial data B") }
+
+        val taskA = createTask("task_A").copy(title = "Common Title", localPath = fileA.absolutePath)
+        val taskB = createTask("task_B").copy(title = "Common Title", localPath = fileB.absolutePath)
+        fakeDao.insertAll(listOf(taskA, taskB))
+
+        assertTrue(partA.exists())
+        assertTrue(partB.exists())
+
+        coordinator.cancelTask("task_A")
+        advanceUntilIdle()
+
+        assertFalse("Cancelled task part file must be deleted", partA.exists())
+        assertTrue("Other task part file must remain untouched", partB.exists())
+        assertEquals("partial data B", partB.readText())
+    }
+
     private fun createTask(id: String) = DownloadTaskEntity(
         id = id,
         title = "Video $id",
@@ -184,6 +317,7 @@ class DownloadCoordinatorUnitTest {
 
     private class FakeDownloadEngine : DownloadEngine {
         var startCount = 0
+        val destinationFiles = mutableMapOf<String, File>()
         private val runningDeferreds = mutableMapOf<String, CompletableDeferred<DownloadResult>>()
 
         override fun isRunning(taskId: String): Boolean = runningDeferreds.containsKey(taskId)
@@ -197,6 +331,7 @@ class DownloadCoordinatorUnitTest {
             onProgress: suspend (DownloadProgressUpdate) -> Unit
         ): DownloadResult {
             startCount++
+            destinationFiles[taskId] = destinationFile
             val deferred = CompletableDeferred<DownloadResult>()
             runningDeferreds[taskId] = deferred
             val result = deferred.await()

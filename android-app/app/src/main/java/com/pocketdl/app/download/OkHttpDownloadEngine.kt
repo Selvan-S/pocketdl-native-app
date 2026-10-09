@@ -58,6 +58,7 @@ class OkHttpDownloadEngine(
         activeJobs[taskId] = handle
 
         val partFile = DownloadFileUtils.resolvePartFile(destinationFile)
+        var activePartFile = partFile
         var randomAccessFile: RandomAccessFile? = null
         val progressCalculator = DownloadProgressCalculator()
 
@@ -86,9 +87,32 @@ class OkHttpDownloadEngine(
 
             val response = call.execute()
 
-            // Extract caching validators from response
+            // Extract caching validators and metadata headers from response
             val responseEtag = response.header("ETag")?.trim()
             val responseLastModified = response.header("Last-Modified")?.trim()
+            val contentType = response.header("Content-Type")
+            val contentDisposition = response.header("Content-Disposition")
+
+            val effectiveDestFile = DownloadFileUtils.refineDestinationFile(
+                currentDestFile = destinationFile,
+                taskId = taskId,
+                url = url,
+                contentType = contentType,
+                contentDisposition = contentDisposition
+            )
+            val effectivePartFile = DownloadFileUtils.resolvePartFile(effectiveDestFile)
+            activePartFile = effectivePartFile
+            val initialPartFile = DownloadFileUtils.resolvePartFile(destinationFile)
+
+            if (effectiveDestFile != destinationFile && initialPartFile.exists() && !effectivePartFile.exists()) {
+                val moved = initialPartFile.renameTo(effectivePartFile)
+                if (!moved) {
+                    try {
+                        initialPartFile.copyTo(effectivePartFile, overwrite = false)
+                        initialPartFile.delete()
+                    } catch (_: Exception) {}
+                }
+            }
 
             // Handle HTTP 416 (Range Not Satisfiable)
             if (response.code == 416) {
@@ -98,7 +122,7 @@ class OkHttpDownloadEngine(
 
                 if (totalFrom416 != null && existingBytes == totalFrom416 && totalFrom416 > 0L) {
                     // The local file is already completely downloaded
-                    val finalized = DownloadFileUtils.finalizeDownload(partFile, destinationFile)
+                    val finalized = DownloadFileUtils.finalizeDownload(effectivePartFile, effectiveDestFile)
                     return@withContext DownloadResult.Success(
                         file = finalized,
                         totalBytes = totalFrom416,
@@ -107,12 +131,12 @@ class OkHttpDownloadEngine(
                     )
                 } else {
                     // Invalidate partial file and restart from 0
-                    partFile.delete()
+                    effectivePartFile.delete()
                     existingBytes = 0L
                     return@withContext download(
                         taskId = taskId,
                         url = url,
-                        destinationFile = destinationFile,
+                        destinationFile = effectiveDestFile,
                         existingEtag = null,
                         existingLastModified = null,
                         onProgress = onProgress
@@ -141,11 +165,11 @@ class OkHttpDownloadEngine(
                 if (parsedRange == null || parsedRange.startOffset != existingBytes) {
                     response.close()
                     // Treat as unsafe, reset partial file and restart cleanly from 0
-                    partFile.delete()
+                    effectivePartFile.delete()
                     return@withContext download(
                         taskId = taskId,
                         url = url,
-                        destinationFile = destinationFile,
+                        destinationFile = effectiveDestFile,
                         existingEtag = null,
                         existingLastModified = null,
                         onProgress = onProgress
@@ -160,11 +184,11 @@ class OkHttpDownloadEngine(
             } else {
                 // HTTP 200: Server sent complete file from offset 0
                 resumeOffset = 0L
-                partFile.delete()
+                effectivePartFile.delete()
                 totalBytes = body.contentLength()
             }
 
-            randomAccessFile = RandomAccessFile(partFile, "rw")
+            randomAccessFile = RandomAccessFile(effectivePartFile, "rw")
             if (resumeOffset > 0L) {
                 randomAccessFile.seek(resumeOffset)
             } else {
@@ -238,7 +262,7 @@ class OkHttpDownloadEngine(
                 )
             )
 
-            val finalized = DownloadFileUtils.finalizeDownload(partFile, destinationFile)
+            val finalized = DownloadFileUtils.finalizeDownload(activePartFile, effectiveDestFile)
             return@withContext DownloadResult.Success(
                 file = finalized,
                 totalBytes = downloadedBytes,
@@ -256,7 +280,7 @@ class OkHttpDownloadEngine(
             }
 
             if (handle.isCancelled.get()) {
-                DownloadFileUtils.deletePartFile(partFile)
+                DownloadFileUtils.deletePartFile(activePartFile)
                 return@withContext DownloadResult.Cancelled
             }
 
@@ -264,7 +288,7 @@ class OkHttpDownloadEngine(
                 return@withContext DownloadResult.Paused
             }
 
-            return@withContext DownloadResult.Failure(e, canResume = partFile.exists() && partFile.length() > 0L)
+            return@withContext DownloadResult.Failure(e, canResume = activePartFile.exists() && activePartFile.length() > 0L)
         } finally {
             activeJobs.remove(taskId)
         }

@@ -19,6 +19,9 @@ import java.util.concurrent.ConcurrentHashMap
  * Minimal Phase 6 Download Coordinator.
  * Enforces max parallel downloads (1–5) from [SettingsRepository], prevents duplicate execution,
  * manages Start All / Pause All / Start Now, and auto-advances the queue on task completion or failure.
+ *
+ * Implements a strict startup initialization barrier: reconciles any stale DOWNLOADING tasks
+ * to PAUSED state before accepting or dispatching work.
  */
 class DownloadCoordinator(
     private val engine: DownloadEngine,
@@ -31,6 +34,30 @@ class DownloadCoordinator(
     private val activeJobs = ConcurrentHashMap<String, Job>()
     private val mutex = Mutex()
 
+    private val initializationJob: Job = coordinatorScope.launch(ioDispatcher) {
+        reconcileStartupStateInternal()
+    }
+
+    /**
+     * Suspends until startup state reconciliation has completed.
+     * All dispatch operations await this barrier before taking any action.
+     */
+    suspend fun ensureInitialized() {
+        initializationJob.join()
+    }
+
+    private suspend fun reconcileStartupStateInternal() {
+        mutex.withLock {
+            downloadTaskDao.updateAllStatus(
+                fromStatuses = listOf(TaskStatus.DOWNLOADING.name),
+                toStatus = TaskStatus.PAUSED.name,
+                statusText = "Paused",
+                speedText = "0 KB/s",
+                etaText = "Paused"
+            )
+        }
+    }
+
     fun isRunning(taskId: String): Boolean = activeJobs.containsKey(taskId)
 
     /**
@@ -39,6 +66,7 @@ class DownloadCoordinator(
      */
     fun startTask(taskId: String) {
         coordinatorScope.launch(ioDispatcher) {
+            ensureInitialized()
             mutex.withLock {
                 if (activeJobs.containsKey(taskId)) return@withLock
                 val task = downloadTaskDao.findById(taskId) ?: return@withLock
@@ -64,6 +92,7 @@ class DownloadCoordinator(
      */
     fun pauseTask(taskId: String) {
         coordinatorScope.launch(ioDispatcher) {
+            ensureInitialized()
             engine.pause(taskId)
             downloadTaskDao.updateStatus(
                 id = taskId,
@@ -81,11 +110,16 @@ class DownloadCoordinator(
      */
     fun cancelTask(taskId: String) {
         coordinatorScope.launch(ioDispatcher) {
+            ensureInitialized()
             engine.cancel(taskId)
             val task = downloadTaskDao.findById(taskId)
             if (task != null) {
                 val destDir = destinationDirProvider()
-                val targetFile = File(destDir, DownloadFileUtils.sanitizeFileName(task.title, task.id))
+                val targetFile = if (!task.localPath.isNullOrBlank()) {
+                    File(task.localPath)
+                } else {
+                    DownloadFileUtils.resolveDestinationFile(destDir, task.title, taskId, url = task.sourceUrl)
+                }
                 val partFile = DownloadFileUtils.resolvePartFile(targetFile)
                 DownloadFileUtils.deletePartFile(partFile)
                 downloadTaskDao.deleteById(taskId)
@@ -99,6 +133,7 @@ class DownloadCoordinator(
      */
     fun retryTask(taskId: String) {
         coordinatorScope.launch(ioDispatcher) {
+            ensureInitialized()
             downloadTaskDao.updateStatus(
                 id = taskId,
                 status = TaskStatus.QUEUED.name,
@@ -115,6 +150,7 @@ class DownloadCoordinator(
      */
     fun startAll() {
         coordinatorScope.launch(ioDispatcher) {
+            ensureInitialized()
             mutex.withLock {
                 downloadTaskDao.updateAllStatus(
                     fromStatuses = listOf(TaskStatus.PAUSED.name),
@@ -133,6 +169,7 @@ class DownloadCoordinator(
      */
     fun pauseAll() {
         coordinatorScope.launch(ioDispatcher) {
+            ensureInitialized()
             val runningIds = activeJobs.keys.toList()
             for (id in runningIds) {
                 engine.pause(id)
@@ -153,6 +190,7 @@ class DownloadCoordinator(
      */
     fun startNow(taskId: String) {
         coordinatorScope.launch(ioDispatcher) {
+            ensureInitialized()
             mutex.withLock {
                 val task = downloadTaskDao.findById(taskId) ?: return@withLock
                 if (!activeJobs.containsKey(taskId)) {
@@ -164,8 +202,10 @@ class DownloadCoordinator(
 
     private suspend fun onTaskTerminated(taskId: String) {
         mutex.withLock {
-            activeJobs.remove(taskId)
-            dispatchNextSlots()
+            val removed = activeJobs.remove(taskId)
+            if (removed != null) {
+                dispatchNextSlots()
+            }
         }
     }
 
@@ -185,19 +225,32 @@ class DownloadCoordinator(
     private fun launchTaskInternal(task: DownloadTaskEntity) {
         val taskId = task.id
         val downloadDir = destinationDirProvider()
-        val destFile = DownloadFileUtils.resolveDestinationFile(
-            downloadDir = downloadDir,
-            fileName = "${task.title.replace(" ", "_")}.mp4",
-            fallbackId = taskId
-        )
+        val destFile = if (!task.localPath.isNullOrBlank()) {
+            File(task.localPath)
+        } else {
+            DownloadFileUtils.resolveDestinationFile(
+                downloadDir = downloadDir,
+                fileName = task.title,
+                taskId = taskId,
+                url = task.sourceUrl
+            )
+        }
 
         val job = coordinatorScope.launch(ioDispatcher) {
-            downloadTaskDao.updateStatus(
+            // Persist the stable destination path BEFORE writing any bytes or starting engine
+            downloadTaskDao.updateProgress(
                 id = taskId,
                 status = TaskStatus.DOWNLOADING.name,
                 statusText = "Connecting...",
+                progress = task.progress,
+                downloadedSizeText = task.downloadedSizeText,
+                totalSizeText = task.totalSizeText,
                 speedText = "0 KB/s",
-                etaText = "--:--"
+                etaText = "--:--",
+                localPath = destFile.absolutePath,
+                etag = task.etag,
+                lastModified = task.lastModified,
+                completedAt = null
             )
 
             val result = engine.download(

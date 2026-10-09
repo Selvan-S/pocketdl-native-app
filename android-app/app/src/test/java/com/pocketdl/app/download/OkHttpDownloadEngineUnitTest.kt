@@ -153,6 +153,8 @@ class OkHttpDownloadEngineUnitTest {
             onProgress = {}
         )
 
+        val request = server.takeRequest()
+        assertEquals("bytes=6-", request.getHeader("Range"))
         assertTrue(result is DownloadResult.Success)
         assertEquals("PART1_PART2_", destFile.readText())
         assertFalse(partFile.exists())
