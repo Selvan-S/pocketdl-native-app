@@ -42,6 +42,22 @@ class DownloadNotificationManager(
     }
 
     /**
+     * Builds an ongoing progress notification using a structured [DownloadNotificationState].
+     */
+    fun buildOngoingNotification(state: DownloadNotificationState): Notification {
+        return buildOngoingNotification(
+            activeCount = state.activeCount,
+            title = state.title,
+            progressPercent = state.progressPercent,
+            downloadedSizeText = state.downloadedSizeText,
+            totalSizeText = state.totalSizeText,
+            speedText = state.speedText,
+            etaText = state.etaText,
+            primaryTaskId = state.primaryTaskId
+        )
+    }
+
+    /**
      * Builds an ongoing progress notification suitable for foreground service display.
      */
     fun buildOngoingNotification(
@@ -222,3 +238,18 @@ class DownloadNotificationManager(
         const val ONGOING_NOTIFICATION_ID = 1001
     }
 }
+
+/**
+ * State snapshot representing the active foreground notification payload.
+ */
+data class DownloadNotificationState(
+    val activeCount: Int = 1,
+    val title: String? = null,
+    val progressPercent: Int = 0,
+    val downloadedSizeText: String = "0 MB",
+    val totalSizeText: String = "0 MB",
+    val speedText: String = "0 KB/s",
+    val etaText: String = "--:--",
+    val primaryTaskId: String? = null
+)
+

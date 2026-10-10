@@ -80,7 +80,8 @@ class DefaultAppContainer(
                 targetDir
             },
             coordinatorScope = CoroutineScope(SupervisorJob() + dispatchers.io),
-            ioDispatcher = dispatchers.io
+            ioDispatcher = dispatchers.io,
+            applicationContext = applicationContext
         )
     }
 
