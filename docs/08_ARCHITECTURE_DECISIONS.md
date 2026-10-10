@@ -306,3 +306,34 @@ If the design must change, update the design/source-of-truth and document the re
 The Android app roadmap must use the mobile designs relevant to the current phase. The browser extension popup is not an Android screen and must not be implemented inside the Android app.
 
 ---
+
+## ADR-017 — Native Android Foreground Service for Active Downloads (dataSync)
+
+**Status:** Accepted
+
+**Decision:** Active media transfers run inside a native Android foreground service (`DownloadService`) typed as `dataSync` (`FOREGROUND_SERVICE_TYPE_DATA_SYNC`).
+
+**Reason:**
+- Elevated process priority prevents background process killing when the PocketDL UI is dismissed or the device screen is locked.
+- Complies with Android 14+ (API 34) and target SDK 37 requirements for foreground service types.
+- Integrates Android 15 (API 35+) `onTimeout` handling for cumulative background execution limits.
+
+**Alternatives considered:**
+- `WorkManager`: Poor fit for low-latency, user-visible streaming transfers requiring immediate real-time progress bar updates and fine-grained HTTP Range control.
+- Background worker without foreground service: Violates Android 12+ background execution policies, prone to immediate OS termination.
+
+---
+
+## ADR-018 — Single Execution Owner with Startup Ordering Barrier and Session Token Tracking
+
+**Status:** Accepted
+
+**Decision:** `DownloadCoordinator` (application-scoped via `AppContainer`) is the sole execution manager for download tasks and worker jobs. Download execution must not begin until `DownloadService.onStartCommand()` verifies successful foreground service promotion.
+
+**Reason:**
+- Prevents network I/O from running unprotected before the service is foregrounded.
+- Session sequence tokens (`serviceStartSessionId`) coordinate concurrent task requests into a single startup attempt and prevent stale success/failure callbacks from affecting newer sessions.
+- Prevents split-brain state or duplicate active job registries across ViewModels, repositories, and services.
+
+---
+
