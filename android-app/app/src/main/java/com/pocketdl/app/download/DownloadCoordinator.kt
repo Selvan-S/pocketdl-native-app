@@ -30,7 +30,7 @@ class DownloadCoordinator(
     private val destinationDirProvider: () -> File,
     private val coordinatorScope: CoroutineScope,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
-) {
+) : DownloadActionHandler {
     private val activeJobs = ConcurrentHashMap<String, Job>()
     private val mutex = Mutex()
 
@@ -64,7 +64,7 @@ class DownloadCoordinator(
      * Attempts to start or resume a task. If max concurrency is reached,
      * the task status remains QUEUED in Room.
      */
-    fun startTask(taskId: String) {
+    override fun startTask(taskId: String) {
         coordinatorScope.launch(ioDispatcher) {
             ensureInitialized()
             mutex.withLock {
@@ -90,7 +90,7 @@ class DownloadCoordinator(
     /**
      * Pauses an active task. Temporary partial file is preserved.
      */
-    fun pauseTask(taskId: String) {
+    override fun pauseTask(taskId: String) {
         coordinatorScope.launch(ioDispatcher) {
             ensureInitialized()
             engine.pause(taskId)
@@ -108,7 +108,7 @@ class DownloadCoordinator(
     /**
      * Cancels a task and cleans up temporary partial files.
      */
-    fun cancelTask(taskId: String) {
+    override fun cancelTask(taskId: String) {
         coordinatorScope.launch(ioDispatcher) {
             ensureInitialized()
             engine.cancel(taskId)
@@ -148,7 +148,7 @@ class DownloadCoordinator(
     /**
      * Resumes or starts all paused/queued downloads up to max parallel limit.
      */
-    fun startAll() {
+    override fun startAll() {
         coordinatorScope.launch(ioDispatcher) {
             ensureInitialized()
             mutex.withLock {
@@ -167,7 +167,7 @@ class DownloadCoordinator(
     /**
      * Pauses all currently executing downloads.
      */
-    fun pauseAll() {
+    override fun pauseAll() {
         coordinatorScope.launch(ioDispatcher) {
             ensureInitialized()
             val runningIds = activeJobs.keys.toList()
