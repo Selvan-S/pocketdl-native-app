@@ -16,11 +16,11 @@
 
 **Primary stack:** Kotlin + Jetpack Compose
 
-**Current Phase:** Phase 4 / 5 — Room Persistence / COMPLETED
+**Current Phase:** Phase 7 — Background Execution & Notifications / COMPLETED
 
-**Status:** ROOM PERSISTENCE COMPLETED. READY FOR PHASE 6 (DIRECT HTTP DOWNLOAD ENGINE).
+**Status:** PHASE 7 COMPLETED. FOREGROUND SERVICE + REAL-TIME NOTIFICATIONS OPERATIONAL AND VERIFIED ON DEVICE. READY FOR PHASE 8 (DOWNLOAD MANAGER HARDENING).
 
-**Last updated:** 2026-10-08
+**Last updated:** 2026-10-10
 
 ---
 
@@ -130,14 +130,14 @@ pocketdl-native/
 
 ### Git
 
-- Git branch: `room-persistence`
+- Git branch: `phase-7`
 
 ### Android Studio / Gradle
 
 - Installed/configured: **VERIFIED**
 - Gradle build (`assembleDebug`): **VERIFIED SUCCESSFUL**
-- Automated tests (`./gradlew test`): **PASSING (100% pass rate: Phase3ViewModelStateUnitTest, RoomPersistenceUnitTest)**
-- Device Run/Verification: **VERIFIED on physical connected Samsung Galaxy S22 Ultra via ADB (persistence across app kill confirmed)**
+- Automated tests (`./gradlew testDebugUnitTest`): **PASSING (100% pass rate: 83 tests passing)**
+- Device Run/Verification: **VERIFIED on physical connected Samsung Galaxy S22 Ultra via ADB (foreground service dataSync + real-time notification shade updates confirmed)**
 
 ---
 
@@ -150,9 +150,9 @@ pocketdl-native/
 | 2 | Stitch Design System Extraction | COMPLETED |
 | 3 | Screen State & Interactions | COMPLETED |
 | 4/5 | Room Persistence | COMPLETED |
-| 6 | Direct HTTP Download Engine | NEXT UP |
-| 7 | Background Execution + Notifications | NOT STARTED |
-| 8 | Download Manager Hardening | NOT STARTED |
+| 6 | Direct HTTP Download Engine | COMPLETED |
+| 7 | Background Execution + Notifications | COMPLETED |
+| 8 | Download Manager Hardening | NEXT UP |
 | 9 | Extension Capture Protocol | NOT STARTED |
 | 10 | Real Browser Extension Integration | NOT STARTED |
 | 11 | HLS Support | NOT STARTED |
@@ -167,4 +167,4 @@ pocketdl-native/
 
 ## Next Action
 
-Proceed to **Phase 6 — Direct HTTP Download Engine** (implementing standalone HTTP file download engine with streaming byte progress, resume with HTTP Range headers, and direct storage output).
+Proceed to **Phase 8 — Download Manager Hardening** (queue ordering, max concurrency management, app restart recovery, cancellation cleanup, in-app notification permission prompt, and robust error handling).
