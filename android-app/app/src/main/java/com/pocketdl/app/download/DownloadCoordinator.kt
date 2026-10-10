@@ -13,12 +13,20 @@ import com.pocketdl.app.ui.mock.TaskStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -47,7 +55,12 @@ open class DownloadCoordinator(
     private val startServiceLauncher: ((Context?) -> Unit)? = null
 ) : DownloadActionHandler {
     private val activeJobs = ConcurrentHashMap<String, Job>()
+    private val retiringJobs = ConcurrentHashMap<String, Job>()
     private val mutex = Mutex()
+    private val cleanupJob = SupervisorJob()
+    private val cleanupScope = CoroutineScope(cleanupJob + ioDispatcher)
+    private val reservedTasks = mutableMapOf<String, Long>()
+    private var reservationSequence = 0L
 
     private var serviceStartSessionId: Long = 0L
 
@@ -59,6 +72,22 @@ open class DownloadCoordinator(
 
     private val _serviceForegroundState = MutableStateFlow<ServiceForegroundResult>(ServiceForegroundResult.Idle)
     val serviceForegroundState: StateFlow<ServiceForegroundResult> = _serviceForegroundState.asStateFlow()
+
+    init {
+        coordinatorScope.coroutineContext[Job]?.invokeOnCompletion {
+            cleanupScope.launch(NonCancellable) {
+                mutex.withLock {
+                    activeJobs.clear()
+                    reservedTasks.clear()
+                    retiringJobs.clear()
+                    _activeJobsCount.value = 0
+                    _activeNotificationState.value = null
+                    _serviceForegroundState.value = ServiceForegroundResult.Idle
+                }
+                cleanupJob.cancel()
+            }
+        }
+    }
 
     private val initializationJob: Job = coordinatorScope.launch(ioDispatcher) {
         reconcileStartupStateInternal()
@@ -93,136 +122,36 @@ open class DownloadCoordinator(
     }
 
     private suspend fun reconcileStartupStateInternal() {
-        mutex.withLock {
-            downloadTaskDao.updateAllStatus(
-                fromStatuses = listOf(TaskStatus.DOWNLOADING.name),
-                toStatus = TaskStatus.PAUSED.name,
-                statusText = "Paused",
-                speedText = "0 KB/s",
-                etaText = "Paused"
-            )
-        }
+        downloadTaskDao.updateAllStatus(
+            fromStatuses = listOf(TaskStatus.DOWNLOADING.name),
+            toStatus = TaskStatus.PAUSED.name,
+            statusText = "Paused",
+            speedText = "0 KB/s",
+            etaText = "Paused"
+        )
     }
 
     fun isRunning(taskId: String): Boolean = activeJobs.containsKey(taskId)
 
+    fun isRetiring(taskId: String): Boolean = retiringJobs.containsKey(taskId)
+
     /**
      * Attempts to start or resume a task. If max concurrency is reached,
-     * the task status remains QUEUED in Room.
+     * the task status remains QUEUED in Room and is picked up deterministically.
      */
     override fun startTask(taskId: String) {
         coordinatorScope.launch(ioDispatcher) {
             ensureInitialized()
 
-            val task = mutex.withLock {
-                if (activeJobs.containsKey(taskId)) null
-                else downloadTaskDao.findById(taskId)
+            val retiringJob = mutex.withLock { retiringJobs[taskId] }
+            retiringJob?.join()
+
+            val task = downloadTaskDao.findById(taskId) ?: return@launch
+            val shouldEnqueue = mutex.withLock {
+                !activeJobs.containsKey(taskId) && !reservedTasks.containsKey(taskId) && !retiringJobs.containsKey(taskId)
             }
-            if (task == null) return@launch
-
-            var currentSessionId: Long = 0L
-            var shouldStartLauncher = false
-
-            mutex.withLock {
-                if (activeJobs.containsKey(taskId)) return@launch
-                val currentState = _serviceForegroundState.value
-
-                if (activeJobs.isEmpty()) {
-                    when (currentState) {
-                        is ServiceForegroundResult.Idle, is ServiceForegroundResult.Failed -> {
-                            serviceStartSessionId++
-                            currentSessionId = serviceStartSessionId
-                            _serviceForegroundState.value = ServiceForegroundResult.Starting(currentSessionId)
-                            shouldStartLauncher = true
-                        }
-                        is ServiceForegroundResult.Starting -> {
-                            currentSessionId = currentState.sessionId
-                            shouldStartLauncher = false
-                        }
-                        is ServiceForegroundResult.Success -> {
-                            currentSessionId = currentState.sessionId
-                            shouldStartLauncher = false
-                        }
-                    }
-                } else {
-                    currentSessionId = serviceStartSessionId
-                    shouldStartLauncher = false
-                }
-            }
-
-            if (shouldStartLauncher) {
-                val ctx = applicationContext
-                val launcher = startServiceLauncher
-                try {
-                    if (launcher != null) {
-                        launcher(ctx)
-                    } else if (ctx != null) {
-                        val serviceIntent = Intent(ctx, DownloadService::class.java)
-                        androidx.core.content.ContextCompat.startForegroundService(ctx, serviceIntent)
-                    } else {
-                        // In unit test environment without Context or launcher, default to Success
-                        mutex.withLock {
-                            _serviceForegroundState.value = ServiceForegroundResult.Success(currentSessionId)
-                        }
-                    }
-                } catch (e: Exception) {
-                    mutex.withLock {
-                        _serviceForegroundState.value = ServiceForegroundResult.Failed(currentSessionId, e)
-                    }
-                    downloadTaskDao.updateStatus(
-                        id = taskId,
-                        status = TaskStatus.PAUSED.name,
-                        statusText = "Paused (Background Start Blocked)",
-                        speedText = "0 KB/s",
-                        etaText = "Paused"
-                    )
-                    return@launch
-                }
-            }
-
-            // Bounded barrier wait with 8s timeout
-            val currentStateNow = _serviceForegroundState.value
-            if (currentStateNow !is ServiceForegroundResult.Success || currentStateNow.sessionId != currentSessionId) {
-                val barrierResult = withTimeoutOrNull(8_000) {
-                    _serviceForegroundState.first { res ->
-                        when (res) {
-                            is ServiceForegroundResult.Success -> res.sessionId == currentSessionId
-                            is ServiceForegroundResult.Failed -> res.sessionId == currentSessionId
-                            else -> false
-                        }
-                    }
-                }
-
-                if (barrierResult == null || barrierResult is ServiceForegroundResult.Failed) {
-                    val isTimeout = barrierResult == null
-                    val exception = if (isTimeout) TimeoutException("Service start timed out after 8s")
-                    else (barrierResult as ServiceForegroundResult.Failed).exception
-
-                    mutex.withLock {
-                        if (_serviceForegroundState.value !is ServiceForegroundResult.Success) {
-                            _serviceForegroundState.value = ServiceForegroundResult.Failed(currentSessionId, exception)
-                        }
-                    }
-
-                    val reasonText = if (isTimeout) "Timeout" else "Failed"
-                    downloadTaskDao.updateStatus(
-                        id = taskId,
-                        status = TaskStatus.PAUSED.name,
-                        statusText = "Paused (Foreground Service $reasonText)",
-                        speedText = "0 KB/s",
-                        etaText = "Paused"
-                    )
-                    return@launch
-                }
-            }
-
-            mutex.withLock {
-                if (activeJobs.containsKey(taskId)) return@withLock
-                val maxParallel = getMaxParallel()
-
-                if (activeJobs.size < maxParallel) {
-                    launchTaskInternal(task)
-                } else {
+            if (shouldEnqueue) {
+                if (task.status != TaskStatus.DOWNLOADING.name) {
                     downloadTaskDao.updateStatus(
                         id = taskId,
                         status = TaskStatus.QUEUED.name,
@@ -232,39 +161,362 @@ open class DownloadCoordinator(
                     )
                 }
             }
+            dispatchQueueInternal()
         }
     }
 
     /**
-     * Pauses an active task. Preserves COMPLETED or FAILED terminal states.
+     * Dispatches queued tasks up to available maxParallel capacity.
+     */
+    fun dispatchQueue() {
+        coordinatorScope.launch(ioDispatcher) {
+            dispatchQueueInternal()
+        }
+    }
+
+    private suspend fun dispatchQueueInternal() {
+        if (!coordinatorScope.isActive) return
+
+        val (availableSlots, fetchLimit) = mutex.withLock {
+            val maxParallel = getMaxParallel()
+            val inFlight = activeJobs.size + reservedTasks.size
+            val slots = maxParallel - inFlight
+            val effectiveSlots = if (slots < 0) 0 else slots
+            Pair(effectiveSlots, effectiveSlots + inFlight)
+        }
+        if (availableSlots <= 0) return
+
+        // Room I/O performed strictly OUTSIDE mutex with fetchLimit accounting for in-flight tasks
+        val queuedCandidates = downloadTaskDao.findOldestQueued(fetchLimit)
+        if (queuedCandidates.isEmpty()) return
+
+        val tasksToProcess = mutableListOf<Pair<DownloadTaskEntity, Long>>()
+        mutex.withLock {
+            val maxParallel = getMaxParallel()
+            for (task in queuedCandidates) {
+                val currentSlots = maxParallel - (activeJobs.size + reservedTasks.size)
+                if (currentSlots <= 0) break
+                if (!activeJobs.containsKey(task.id) && !reservedTasks.containsKey(task.id) && !retiringJobs.containsKey(task.id)) {
+                    val token = ++reservationSequence
+                    reservedTasks[task.id] = token
+                    tasksToProcess.add(Pair(task, token))
+                }
+            }
+        } // Mutex released before any async operations
+
+        for ((task, token) in tasksToProcess) {
+            coordinatorScope.launch(ioDispatcher) {
+                processReservedTask(task, token)
+            }
+        }
+    }
+
+    private suspend fun processReservedTask(task: DownloadTaskEntity, token: Long) {
+        val taskId = task.id
+
+        // 1. Pre-validation before foreground elevation
+        val stillValidBeforeElevation = mutex.withLock { reservedTasks[taskId] == token }
+        if (!stillValidBeforeElevation) return
+
+        // 2. Foreground service elevation barrier
+        val serviceElevated = ensureServiceElevated(taskId)
+        if (!serviceElevated) {
+            val released = releaseReservation(taskId, token)
+            if (released) {
+                val state = _serviceForegroundState.value
+                val isTimeout = state is ServiceForegroundResult.Failed && state.exception is TimeoutException
+                val reasonText = if (isTimeout) "Foreground Service Timeout" else "Background Start Blocked"
+                downloadTaskDao.updateStatus(
+                    id = taskId,
+                    status = TaskStatus.PAUSED.name,
+                    statusText = "Paused ($reasonText)",
+                    speedText = "0 KB/s",
+                    etaText = "Paused"
+                )
+                dispatchQueueInternal()
+            }
+            return
+        }
+
+        // 3. Post-elevation reservation validation
+        val stillValidAfterElevation = mutex.withLock { reservedTasks[taskId] == token }
+        if (!stillValidAfterElevation) return
+
+        // 4. Revalidate task in Room strictly OUTSIDE mutex
+        val currentInDb = downloadTaskDao.findById(taskId)
+        if (currentInDb == null || currentInDb.status != TaskStatus.QUEUED.name) {
+            val released = releaseReservation(taskId, token)
+            if (released) {
+                dispatchQueueInternal()
+            }
+            return
+        }
+
+        // 5. Construct lazy worker job
+        val lazyJob = coordinatorScope.launch(ioDispatcher, start = CoroutineStart.LAZY) {
+            runWorker(currentInDb)
+        }
+
+        // 6. Register lifecycle-safe completion cleanup callback on managed cleanupScope
+        lazyJob.invokeOnCompletion {
+            cleanupScope.launch {
+                val wasActive = releaseActiveJob(taskId, expectedJob = lazyJob)
+                if (wasActive && coordinatorScope.isActive) {
+                    dispatchQueueInternal()
+                }
+            }
+        }
+
+        // 7. Atomic handoff from reservation to activeJobs under mutex
+        val handoffSuccess = handoffReservationToActive(taskId, token, lazyJob)
+        if (!handoffSuccess) {
+            lazyJob.cancel()
+            releaseReservation(taskId, token)
+            return
+        }
+
+        // 8. Start worker execution
+        lazyJob.start()
+    }
+
+    private suspend fun ensureServiceElevated(taskId: String): Boolean {
+        var currentSessionId: Long = 0L
+        var shouldStartLauncher = false
+
+        mutex.withLock {
+            val currentState = _serviceForegroundState.value
+            if (activeJobs.isEmpty()) {
+                when (currentState) {
+                    is ServiceForegroundResult.Idle, is ServiceForegroundResult.Failed -> {
+                        serviceStartSessionId++
+                        currentSessionId = serviceStartSessionId
+                        _serviceForegroundState.value = ServiceForegroundResult.Starting(currentSessionId)
+                        shouldStartLauncher = true
+                    }
+                    is ServiceForegroundResult.Starting -> {
+                        currentSessionId = currentState.sessionId
+                        shouldStartLauncher = false
+                    }
+                    is ServiceForegroundResult.Success -> {
+                        currentSessionId = currentState.sessionId
+                        shouldStartLauncher = false
+                    }
+                }
+            } else {
+                currentSessionId = serviceStartSessionId
+                shouldStartLauncher = false
+            }
+        }
+
+        if (shouldStartLauncher) {
+            val ctx = applicationContext
+            val launcher = startServiceLauncher
+            try {
+                if (launcher != null) {
+                    launcher(ctx)
+                } else if (ctx != null) {
+                    val serviceIntent = Intent(ctx, DownloadService::class.java)
+                    androidx.core.content.ContextCompat.startForegroundService(ctx, serviceIntent)
+                } else {
+                    // In unit test environment without Context or launcher, default to Success
+                    mutex.withLock {
+                        _serviceForegroundState.value = ServiceForegroundResult.Success(currentSessionId)
+                    }
+                }
+            } catch (e: Exception) {
+                mutex.withLock {
+                    _serviceForegroundState.value = ServiceForegroundResult.Failed(currentSessionId, e)
+                }
+                return false
+            }
+        }
+
+        // Bounded barrier wait with 8s timeout
+        val currentStateNow = _serviceForegroundState.value
+        if (currentStateNow !is ServiceForegroundResult.Success || currentStateNow.sessionId != currentSessionId) {
+            val barrierResult = withTimeoutOrNull(8_000) {
+                _serviceForegroundState.first { res ->
+                    when (res) {
+                        is ServiceForegroundResult.Success -> res.sessionId == currentSessionId
+                        is ServiceForegroundResult.Failed -> res.sessionId == currentSessionId
+                        else -> false
+                    }
+                }
+            }
+
+            if (barrierResult == null || barrierResult is ServiceForegroundResult.Failed) {
+                val isTimeout = barrierResult == null
+                val exception = if (isTimeout) TimeoutException("Service start timed out after 8s")
+                else (barrierResult as ServiceForegroundResult.Failed).exception
+
+                mutex.withLock {
+                    if (_serviceForegroundState.value !is ServiceForegroundResult.Success) {
+                        _serviceForegroundState.value = ServiceForegroundResult.Failed(currentSessionId, exception)
+                    }
+                }
+                return false
+            }
+        }
+        return true
+    }
+
+    internal suspend fun handoffReservationToActive(
+        taskId: String,
+        token: Long,
+        job: Job
+    ): Boolean {
+        return mutex.withLock {
+            if (reservedTasks[taskId] == token) {
+                reservedTasks.remove(taskId)
+                activeJobs[taskId] = job
+                _activeJobsCount.value = activeJobs.size
+                true
+            } else {
+                false
+            }
+        }
+    }
+
+    internal suspend fun releaseReservation(taskId: String, expectedToken: Long? = null): Boolean {
+        return mutex.withLock {
+            val currentToken = reservedTasks[taskId]
+            if (currentToken == null) {
+                return@withLock false
+            }
+            if (expectedToken != null && currentToken != expectedToken) {
+                return@withLock false
+            }
+            reservedTasks.remove(taskId) != null
+        }
+    }
+
+    internal suspend fun releaseActiveJob(taskId: String, expectedJob: Job? = null): Boolean {
+        val removed = mutex.withLock {
+            val current = activeJobs[taskId]
+            if (expectedJob != null && current !== expectedJob) {
+                return@withLock false
+            }
+            val job = activeJobs.remove(taskId)
+            if (job != null) {
+                _activeJobsCount.value = activeJobs.size
+                if (activeJobs.isEmpty()) {
+                    _serviceForegroundState.value = ServiceForegroundResult.Idle
+                    _activeNotificationState.value = null
+                }
+                true
+            } else {
+                false
+            }
+        }
+        return removed
+    }
+
+    internal suspend fun isJobCurrent(taskId: String, expectedJob: Job): Boolean {
+        return mutex.withLock {
+            activeJobs[taskId] === expectedJob
+        }
+    }
+
+    internal suspend fun registerActiveJobForTest(taskId: String, job: Job) {
+        mutex.withLock {
+            activeJobs[taskId] = job
+            _activeJobsCount.value = activeJobs.size
+        }
+    }
+
+    /**
+     * Pauses an active or reserved task. Preserves COMPLETED or FAILED terminal states.
      */
     override fun pauseTask(taskId: String) {
         coordinatorScope.launch(ioDispatcher) {
             ensureInitialized()
             engine.pause(taskId)
+
+            var removedFromActive = false
+            var removedFromReserved = false
+            var jobToCancel: Job? = null
+
             mutex.withLock {
-                val currentTask = downloadTaskDao.findById(taskId)
-                if (currentTask?.status != TaskStatus.COMPLETED.name && currentTask?.status != TaskStatus.FAILED.name) {
-                    downloadTaskDao.updateStatus(
-                        id = taskId,
-                        status = TaskStatus.PAUSED.name,
-                        statusText = "Paused",
-                        speedText = "0 KB/s",
-                        etaText = "Paused"
-                    )
+                if (reservedTasks.containsKey(taskId)) {
+                    reservedTasks.remove(taskId)
+                    removedFromReserved = true
+                }
+                jobToCancel = activeJobs.remove(taskId)
+                if (jobToCancel != null) {
+                    retiringJobs[taskId] = jobToCancel!!
+                    removedFromActive = true
+                    _activeJobsCount.value = activeJobs.size
+                    if (activeJobs.isEmpty()) {
+                        _serviceForegroundState.value = ServiceForegroundResult.Idle
+                        _activeNotificationState.value = null
+                    }
                 }
             }
-            onTaskTerminated(taskId)
+
+            jobToCancel?.cancel()
+            jobToCancel?.join()
+
+            if (jobToCancel != null) {
+                mutex.withLock {
+                    retiringJobs.remove(taskId, jobToCancel)
+                }
+            }
+
+            val currentTask = downloadTaskDao.findById(taskId)
+            if (currentTask?.status != TaskStatus.COMPLETED.name && currentTask?.status != TaskStatus.FAILED.name) {
+                downloadTaskDao.updateStatus(
+                    id = taskId,
+                    status = TaskStatus.PAUSED.name,
+                    statusText = "Paused",
+                    speedText = "0 KB/s",
+                    etaText = "Paused"
+                )
+            }
+
+            if (removedFromActive || removedFromReserved) {
+                dispatchQueueInternal()
+            }
         }
     }
 
     /**
-     * Cancels a task and cleans up temporary partial files.
+     * Cancels a task, removes any active job or reservation, and cleans up temporary partial files.
      */
     override fun cancelTask(taskId: String) {
         coordinatorScope.launch(ioDispatcher) {
             ensureInitialized()
             engine.cancel(taskId)
+
+            var removedFromActive = false
+            var removedFromReserved = false
+            var jobToCancel: Job? = null
+
+            mutex.withLock {
+                if (reservedTasks.containsKey(taskId)) {
+                    reservedTasks.remove(taskId)
+                    removedFromReserved = true
+                }
+                jobToCancel = activeJobs.remove(taskId)
+                if (jobToCancel != null) {
+                    retiringJobs[taskId] = jobToCancel!!
+                    removedFromActive = true
+                    _activeJobsCount.value = activeJobs.size
+                    if (activeJobs.isEmpty()) {
+                        _serviceForegroundState.value = ServiceForegroundResult.Idle
+                        _activeNotificationState.value = null
+                    }
+                }
+            }
+
+            jobToCancel?.cancel()
+            jobToCancel?.join()
+
+            if (jobToCancel != null) {
+                mutex.withLock {
+                    retiringJobs.remove(taskId, jobToCancel)
+                }
+            }
+
             val task = downloadTaskDao.findById(taskId)
             if (task != null) {
                 val destDir = destinationDirProvider()
@@ -277,7 +529,10 @@ open class DownloadCoordinator(
                 DownloadFileUtils.deletePartFile(partFile)
                 downloadTaskDao.deleteById(taskId)
             }
-            onTaskTerminated(taskId)
+
+            if (removedFromActive || removedFromReserved) {
+                dispatchQueueInternal()
+            }
         }
     }
 
@@ -289,7 +544,12 @@ open class DownloadCoordinator(
         for (id in runningIds) {
             engine.pause(id)
         }
+        for (job in activeJobs.values) {
+            job.cancel()
+        }
         activeJobs.clear()
+        reservedTasks.clear()
+        retiringJobs.clear()
         _activeJobsCount.value = 0
         _activeNotificationState.value = null
         _serviceForegroundState.value = ServiceForegroundResult.Idle
@@ -337,50 +597,63 @@ open class DownloadCoordinator(
     override fun startAll() {
         coordinatorScope.launch(ioDispatcher) {
             ensureInitialized()
-            val queuedTasks = mutex.withLock {
-                downloadTaskDao.updateAllStatus(
-                    fromStatuses = listOf(TaskStatus.PAUSED.name),
-                    toStatus = TaskStatus.QUEUED.name,
-                    statusText = "Queued",
-                    speedText = "Waiting",
-                    etaText = "In Queue"
-                )
-                val maxParallel = getMaxParallel()
-                downloadTaskDao.findOldestQueued(maxParallel)
-            }
-            for (task in queuedTasks) {
-                startTask(task.id)
-            }
+            downloadTaskDao.updateAllStatus(
+                fromStatuses = listOf(TaskStatus.PAUSED.name),
+                toStatus = TaskStatus.QUEUED.name,
+                statusText = "Queued",
+                speedText = "Waiting",
+                etaText = "In Queue"
+            )
+            dispatchQueueInternal()
         }
     }
 
     /**
-     * Pauses all currently executing downloads. Preserves COMPLETED/FAILED terminal states.
+     * Pauses all currently executing and reserved downloads. Preserves COMPLETED/FAILED terminal states.
      */
     override fun pauseAll() {
         coordinatorScope.launch(ioDispatcher) {
             ensureInitialized()
-            val runningIds = activeJobs.keys.toList()
-            for (id in runningIds) {
-                engine.pause(id)
-                mutex.withLock {
-                    val task = downloadTaskDao.findById(id)
-                    if (task?.status != TaskStatus.COMPLETED.name && task?.status != TaskStatus.FAILED.name) {
-                        downloadTaskDao.updateStatus(
-                            id = id,
-                            status = TaskStatus.PAUSED.name,
-                            statusText = "Paused",
-                            speedText = "0 KB/s",
-                            etaText = "Paused"
-                        )
-                    }
-                }
-            }
-            activeJobs.clear()
+            val runningIds = mutableSetOf<String>()
+            val jobsToCancel = mutableListOf<Job>()
+
             mutex.withLock {
+                runningIds.addAll(activeJobs.keys)
+                runningIds.addAll(reservedTasks.keys)
+                jobsToCancel.addAll(activeJobs.values)
+                for ((id, job) in activeJobs) {
+                    retiringJobs[id] = job
+                }
+                activeJobs.clear()
+                reservedTasks.clear()
                 _activeJobsCount.value = 0
                 _activeNotificationState.value = null
                 _serviceForegroundState.value = ServiceForegroundResult.Idle
+            }
+
+            for (id in runningIds) {
+                engine.pause(id)
+            }
+            for (job in jobsToCancel) {
+                job.cancel()
+            }
+            jobsToCancel.joinAll()
+
+            mutex.withLock {
+                retiringJobs.clear()
+            }
+
+            for (id in runningIds) {
+                val task = downloadTaskDao.findById(id)
+                if (task?.status != TaskStatus.COMPLETED.name && task?.status != TaskStatus.FAILED.name) {
+                    downloadTaskDao.updateStatus(
+                        id = id,
+                        status = TaskStatus.PAUSED.name,
+                        statusText = "Paused",
+                        speedText = "0 KB/s",
+                        etaText = "Paused"
+                    )
+                }
             }
         }
     }
@@ -392,67 +665,55 @@ open class DownloadCoordinator(
         startTask(taskId)
     }
 
-    private suspend fun onTaskTerminated(taskId: String) {
-        mutex.withLock {
-            val removed = activeJobs.remove(taskId)
-            if (removed != null) {
-                _activeJobsCount.value = activeJobs.size
-                if (activeJobs.isEmpty()) {
-                    _serviceForegroundState.value = ServiceForegroundResult.Idle
-                    _activeNotificationState.value = null
-                }
-                dispatchNextSlots()
-            }
-        }
-    }
-
-    private suspend fun dispatchNextSlots() {
-        val maxParallel = getMaxParallel()
-        val availableSlots = maxParallel - activeJobs.size
-        if (availableSlots <= 0) return
-
-        val queuedTasks = downloadTaskDao.findOldestQueued(availableSlots)
-        for (task in queuedTasks) {
-            if (!activeJobs.containsKey(task.id)) {
-                launchTaskInternal(task)
-            }
-        }
-    }
-
-    private fun launchTaskInternal(task: DownloadTaskEntity) {
+    private suspend fun runWorker(task: DownloadTaskEntity) {
         val taskId = task.id
-        val downloadDir = destinationDirProvider()
-        val destFile = if (!task.localPath.isNullOrBlank()) {
-            File(task.localPath)
-        } else {
-            DownloadFileUtils.resolveDestinationFile(
-                downloadDir = downloadDir,
-                fileName = task.title,
-                taskId = taskId,
-                url = task.sourceUrl
-            )
-        }
+        val currentJob = currentCoroutineContext()[Job] ?: return
+        try {
+            // Step 1: Cancellation check and worker identity verification before any network or file work
+            currentCoroutineContext().ensureActive()
 
-        val job = coordinatorScope.launch(ioDispatcher) {
-            try {
-                // Persist destination path before streaming bytes
-                downloadTaskDao.updateProgress(
-                    id = taskId,
-                    status = TaskStatus.DOWNLOADING.name,
-                    statusText = "Connecting...",
-                    progress = task.progress,
-                    downloadedSizeText = task.downloadedSizeText,
-                    totalSizeText = task.totalSizeText,
-                    speedText = "0 KB/s",
-                    etaText = "--:--",
-                    localPath = destFile.absolutePath,
-                    etag = task.etag,
-                    lastModified = task.lastModified,
-                    completedAt = null
+            if (!isJobCurrent(taskId, currentJob)) return
+
+            val initialDbCheck = downloadTaskDao.findById(taskId)
+            if (initialDbCheck == null || (initialDbCheck.status != TaskStatus.QUEUED.name && initialDbCheck.status != TaskStatus.DOWNLOADING.name)) {
+                return
+            }
+
+            if (!isJobCurrent(taskId, currentJob)) return
+
+            val downloadDir = destinationDirProvider()
+            val destFile = if (!task.localPath.isNullOrBlank()) {
+                File(task.localPath)
+            } else {
+                DownloadFileUtils.resolveDestinationFile(
+                    downloadDir = downloadDir,
+                    fileName = task.title,
+                    taskId = taskId,
+                    url = task.sourceUrl
                 )
+            }
 
+            if (!isJobCurrent(taskId, currentJob)) return
+
+            // Persist destination path before streaming bytes (Room call OUTSIDE mutex)
+            downloadTaskDao.updateProgress(
+                id = taskId,
+                status = TaskStatus.DOWNLOADING.name,
+                statusText = "Connecting...",
+                progress = task.progress,
+                downloadedSizeText = task.downloadedSizeText,
+                totalSizeText = task.totalSizeText,
+                speedText = "0 KB/s",
+                etaText = "--:--",
+                localPath = destFile.absolutePath,
+                etag = task.etag,
+                lastModified = task.lastModified,
+                completedAt = null
+            )
+
+            if (isJobCurrent(taskId, currentJob)) {
                 _activeNotificationState.value = DownloadNotificationState(
-                    activeCount = activeJobs.size,
+                    activeCount = _activeJobsCount.value,
                     title = task.title,
                     progressPercent = (task.progress * 100).toInt().coerceIn(0, 100),
                     downloadedSizeText = task.downloadedSizeText,
@@ -461,31 +722,39 @@ open class DownloadCoordinator(
                     etaText = task.etaText,
                     primaryTaskId = taskId
                 )
+            }
 
-                val result = engine.download(
-                    taskId = taskId,
-                    url = task.sourceUrl,
-                    destinationFile = destFile,
-                    existingEtag = task.etag,
-                    existingLastModified = task.lastModified,
-                    onProgress = { update ->
-                        downloadTaskDao.updateProgress(
-                            id = taskId,
-                            status = TaskStatus.DOWNLOADING.name,
-                            statusText = "Downloading",
-                            progress = update.progress,
-                            downloadedSizeText = DownloadProgressCalculator.formatBytes(update.downloadedBytes),
-                            totalSizeText = DownloadProgressCalculator.formatBytes(update.totalBytes),
-                            speedText = update.speedText,
-                            etaText = update.etaText,
-                            localPath = destFile.absolutePath,
-                            etag = update.etag,
-                            lastModified = update.lastModified,
-                            completedAt = null
-                        )
+            // Step 2: Ensure active and verify worker identity right before calling engine.download
+            currentCoroutineContext().ensureActive()
+            if (!isJobCurrent(taskId, currentJob)) return
 
+            val result = engine.download(
+                taskId = taskId,
+                url = task.sourceUrl,
+                destinationFile = destFile,
+                existingEtag = task.etag,
+                existingLastModified = task.lastModified,
+                onProgress = { update ->
+                    if (!isJobCurrent(taskId, currentJob)) return@download
+
+                    downloadTaskDao.updateProgress(
+                        id = taskId,
+                        status = TaskStatus.DOWNLOADING.name,
+                        statusText = "Downloading",
+                        progress = update.progress,
+                        downloadedSizeText = DownloadProgressCalculator.formatBytes(update.downloadedBytes),
+                        totalSizeText = DownloadProgressCalculator.formatBytes(update.totalBytes),
+                        speedText = update.speedText,
+                        etaText = update.etaText,
+                        localPath = destFile.absolutePath,
+                        etag = update.etag,
+                        lastModified = update.lastModified,
+                        completedAt = null
+                    )
+
+                    if (isJobCurrent(taskId, currentJob)) {
                         _activeNotificationState.value = DownloadNotificationState(
-                            activeCount = activeJobs.size,
+                            activeCount = _activeJobsCount.value,
                             title = task.title,
                             progressPercent = (update.progress * 100).toInt().coerceIn(0, 100),
                             downloadedSizeText = DownloadProgressCalculator.formatBytes(update.downloadedBytes),
@@ -495,74 +764,83 @@ open class DownloadCoordinator(
                             primaryTaskId = taskId
                         )
                     }
-                )
+                }
+            )
 
-                mutex.withLock {
-                    // Check if task row was deleted or status already set to COMPLETED
-                    val currentInDb = downloadTaskDao.findById(taskId)
-                    if (currentInDb == null || currentInDb.status == TaskStatus.COMPLETED.name) {
-                        return@launch
-                    }
+            // Step 3: Engine returned.
+            // Verify worker identity BEFORE applying terminal Room updates
+            if (!isJobCurrent(taskId, currentJob)) {
+                return
+            }
 
-                    when (result) {
-                        is DownloadResult.Success -> {
-                            downloadTaskDao.updateProgress(
-                                id = taskId,
-                                status = TaskStatus.COMPLETED.name,
-                                statusText = "Completed",
-                                progress = 1.0f,
-                                downloadedSizeText = DownloadProgressCalculator.formatBytes(result.totalBytes),
-                                totalSizeText = DownloadProgressCalculator.formatBytes(result.totalBytes),
-                                speedText = "0 KB/s",
-                                etaText = "Completed",
-                                localPath = result.file.absolutePath,
-                                etag = result.etag,
-                                lastModified = result.lastModified,
-                                completedAt = System.currentTimeMillis()
-                            )
+            val currentInDb = downloadTaskDao.findById(taskId)
+            if (currentInDb == null || currentInDb.status == TaskStatus.COMPLETED.name) {
+                return
+            }
 
-                            applicationContext?.let { ctx ->
-                                val notifManager = DownloadNotificationManager(ctx)
-                                val notif = notifManager.buildCompletionNotification(taskId, task.title)
-                                notifManager.postNotification(taskId.hashCode(), notif)
-                            }
-                        }
-                        is DownloadResult.Failure -> {
-                            val errMsg = result.error.localizedMessage?.take(40) ?: "Download failed"
-                            downloadTaskDao.updateStatus(
-                                id = taskId,
-                                status = TaskStatus.FAILED.name,
-                                statusText = "Failed: $errMsg",
-                                speedText = "0 KB/s",
-                                etaText = "--:--"
-                            )
+            if (!isJobCurrent(taskId, currentJob)) {
+                return
+            }
 
-                            applicationContext?.let { ctx ->
-                                val notifManager = DownloadNotificationManager(ctx)
-                                val notif = notifManager.buildFailureNotification(taskId, task.title, errMsg)
-                                notifManager.postNotification(taskId.hashCode(), notif)
-                            }
-                        }
-                        is DownloadResult.Paused -> {
-                            downloadTaskDao.updateStatus(
-                                id = taskId,
-                                status = TaskStatus.PAUSED.name,
-                                statusText = "Paused",
-                                speedText = "0 KB/s",
-                                etaText = "Paused"
-                            )
-                        }
-                        is DownloadResult.Cancelled -> {
-                            // Task row deleted or cleaned up
-                        }
+            when (result) {
+                is DownloadResult.Success -> {
+                    downloadTaskDao.updateProgress(
+                        id = taskId,
+                        status = TaskStatus.COMPLETED.name,
+                        statusText = "Completed",
+                        progress = 1.0f,
+                        downloadedSizeText = DownloadProgressCalculator.formatBytes(result.totalBytes),
+                        totalSizeText = DownloadProgressCalculator.formatBytes(result.totalBytes),
+                        speedText = "0 KB/s",
+                        etaText = "Completed",
+                        localPath = result.file.absolutePath,
+                        etag = result.etag,
+                        lastModified = result.lastModified,
+                        completedAt = System.currentTimeMillis()
+                    )
+
+                    applicationContext?.let { ctx ->
+                        val notifManager = DownloadNotificationManager(ctx)
+                        val notif = notifManager.buildCompletionNotification(taskId, task.title)
+                        notifManager.postNotification(taskId.hashCode(), notif)
                     }
                 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                mutex.withLock {
-                    val currentInDb = downloadTaskDao.findById(taskId)
-                    if (currentInDb != null && currentInDb.status != TaskStatus.COMPLETED.name) {
+                is DownloadResult.Failure -> {
+                    val errMsg = result.error.localizedMessage?.take(40) ?: "Download failed"
+                    downloadTaskDao.updateStatus(
+                        id = taskId,
+                        status = TaskStatus.FAILED.name,
+                        statusText = "Failed: $errMsg",
+                        speedText = "0 KB/s",
+                        etaText = "--:--"
+                    )
+
+                    applicationContext?.let { ctx ->
+                        val notifManager = DownloadNotificationManager(ctx)
+                        val notif = notifManager.buildFailureNotification(taskId, task.title, errMsg)
+                        notifManager.postNotification(taskId.hashCode(), notif)
+                    }
+                }
+                is DownloadResult.Paused -> {
+                    downloadTaskDao.updateStatus(
+                        id = taskId,
+                        status = TaskStatus.PAUSED.name,
+                        statusText = "Paused",
+                        speedText = "0 KB/s",
+                        etaText = "Paused"
+                    )
+                }
+                is DownloadResult.Cancelled -> {
+                    // Task row deleted or cleaned up
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (isJobCurrent(taskId, currentJob)) {
+                val currentInDb = downloadTaskDao.findById(taskId)
+                if (currentInDb != null && currentInDb.status != TaskStatus.COMPLETED.name) {
+                    if (isJobCurrent(taskId, currentJob)) {
                         val msg = e.localizedMessage?.take(40) ?: "Error"
                         downloadTaskDao.updateStatus(
                             id = taskId,
@@ -573,13 +851,8 @@ open class DownloadCoordinator(
                         )
                     }
                 }
-            } finally {
-                onTaskTerminated(taskId)
             }
         }
-
-        activeJobs[taskId] = job
-        _activeJobsCount.value = activeJobs.size
     }
 
     private suspend fun getMaxParallel(): Int {

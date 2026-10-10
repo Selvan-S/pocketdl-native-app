@@ -486,8 +486,12 @@ class DownloadCoordinatorOrderingUnitTest {
         override suspend fun findOldestQueued(limit: Int): List<DownloadTaskEntity> {
             return tasks.values
                 .filter { it.status == TaskStatus.QUEUED.name }
-                .sortedBy { it.createdAt }
+                .sortedWith(compareBy<DownloadTaskEntity> { it.createdAt }.thenBy { it.id })
                 .take(limit)
+        }
+
+        override suspend fun findByUrl(url: String): List<DownloadTaskEntity> {
+            return tasks.values.filter { it.sourceUrl == url }.sortedByDescending { it.createdAt }
         }
 
         override suspend fun updateProgress(

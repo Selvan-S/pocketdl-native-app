@@ -15,6 +15,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.UUID
 
 /**
@@ -28,6 +30,7 @@ class RoomDownloadRepository(
 ) : DownloadRepository {
 
     private val repositoryScope = CoroutineScope(SupervisorJob() + ioDispatcher)
+    private val enqueueMutex = Mutex()
 
     init {
         repositoryScope.launch {
@@ -175,8 +178,8 @@ class RoomDownloadRepository(
         sourceDomain: String,
         quality: QualityOptionMock
     ): DownloadTaskMock {
-        val newTask = DownloadTaskMock(
-            id = "dl_${UUID.randomUUID().toString().take(6)}",
+        val candidateTask = DownloadTaskMock(
+            id = "dl_${UUID.randomUUID()}",
             title = title,
             sourceDomain = sourceDomain,
             statusText = "Queued",
@@ -191,9 +194,37 @@ class RoomDownloadRepository(
             sourceUrl = url
         )
         repositoryScope.launch {
-            downloadTaskDao.insert(newTask.toEntity(sourceUrl = url))
-            coordinator?.startTask(newTask.id)
+            var taskToDispatchId: String? = null
+            enqueueMutex.withLock {
+                val existing = downloadTaskDao.findByUrl(url).firstOrNull()
+                when (existing?.status) {
+                    TaskStatus.DOWNLOADING.name, TaskStatus.QUEUED.name -> {
+                        // Active task already in progress or queued; do not create duplicate
+                        return@withLock
+                    }
+                    TaskStatus.PAUSED.name -> {
+                        // Re-enqueue existing paused task for FIFO dispatch
+                        downloadTaskDao.updateStatus(
+                            id = existing.id,
+                            status = TaskStatus.QUEUED.name,
+                            statusText = "Queued",
+                            speedText = "Waiting",
+                            etaText = "In Queue"
+                        )
+                        taskToDispatchId = existing.id
+                    }
+                    TaskStatus.COMPLETED.name, TaskStatus.FAILED.name, null -> {
+                        // Legitimate new or re-download: persist candidateTask to Room
+                        downloadTaskDao.insert(candidateTask.toEntity(sourceUrl = url))
+                        taskToDispatchId = candidateTask.id
+                    }
+                }
+            } // enqueueMutex RELEASED here
+
+            if (taskToDispatchId != null) {
+                coordinator?.startTask(taskToDispatchId!!)
+            }
         }
-        return newTask
+        return candidateTask
     }
 }

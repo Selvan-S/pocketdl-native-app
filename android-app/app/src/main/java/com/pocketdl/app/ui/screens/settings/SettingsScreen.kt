@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pocketdl.app.BuildConfig
 import com.pocketdl.app.data.repository.DownloadEngineType
 import com.pocketdl.app.ui.components.BadgeVariant
 import com.pocketdl.app.ui.components.MetricBadge
@@ -205,6 +206,20 @@ fun SettingsScreen(
                             .padding(10.dp)
                     )
                 }
+            }
+
+            // App Information & Version
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "PocketDL v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondaryDark
+                )
             }
         }
     }

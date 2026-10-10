@@ -130,14 +130,14 @@ pocketdl-native/
 
 ### Git
 
-- Git branch: `phase-7`
+- Git branch: `phase-8`
 
 ### Android Studio / Gradle
 
 - Installed/configured: **VERIFIED**
 - Gradle build (`assembleDebug`): **VERIFIED SUCCESSFUL**
-- Automated tests (`./gradlew testDebugUnitTest`): **PASSING (100% pass rate: 83 tests passing)**
-- Device Run/Verification: **VERIFIED on physical connected Samsung Galaxy S22 Ultra via ADB (foreground service dataSync + real-time notification shade updates confirmed)**
+- Automated tests (`./gradlew testDebugUnitTest`): **PASSING (100% pass rate: 94 tests passing)**
+- Device Run/Verification: **VERIFIED on physical connected Samsung Galaxy S22 Ultra via ADB (`versionCode=2`, `versionName=1.0.0-p8.1` confirmed via dumpsys package; clean app launch confirmed).**
 
 ---
 
@@ -152,7 +152,9 @@ pocketdl-native/
 | 4/5 | Room Persistence | COMPLETED |
 | 6 | Direct HTTP Download Engine | COMPLETED |
 | 7 | Background Execution + Notifications | COMPLETED |
-| 8 | Download Manager Hardening | NEXT UP |
+| 8.1 | Concurrency & Worker Hardening | COMPLETED |
+| 8.2 | Restart Recovery & Retry Budget | NEXT UP |
+| 8.3 | Network & Storage Constraints | NOT STARTED |
 | 9 | Extension Capture Protocol | NOT STARTED |
 | 10 | Real Browser Extension Integration | NOT STARTED |
 | 11 | HLS Support | NOT STARTED |
@@ -167,4 +169,4 @@ pocketdl-native/
 
 ## Next Action
 
-Proceed to **Phase 8 — Download Manager Hardening** (queue ordering, max concurrency management, app restart recovery, cancellation cleanup, in-app notification permission prompt, and robust error handling).
+Proceed to **Checkpoint 8.2 — Restart Recovery & Retry Budget** (reconciling in-flight downloads after process death, bounded retry attempts, exponential backoff, and network constraint checks).
