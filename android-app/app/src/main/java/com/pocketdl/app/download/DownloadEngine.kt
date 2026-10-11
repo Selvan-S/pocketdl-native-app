@@ -4,6 +4,9 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Job
 import okhttp3.Call
+import java.io.IOException
+
+class HttpException(val code: Int, message: String) : IOException(message)
 
 /**
  * Progress payload emitted during an active streaming download.

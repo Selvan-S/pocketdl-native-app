@@ -368,7 +368,7 @@ class DownloadCoordinatorOrderingUnitTest {
         assertTrue(coordinator.isRunning("t_exc"))
 
         // Fail task with unexpected exception
-        fakeEngine.failTask("t_exc", IOException("Disk I/O Error"))
+        fakeEngine.failTask("t_exc", RuntimeException("Disk I/O Error"))
         advanceUntilIdle()
 
         // Task must be cleaned up from activeJobs map
@@ -476,6 +476,27 @@ class DownloadCoordinatorOrderingUnitTest {
             tasksFlow.value = tasks.values.toList()
         }
 
+        override suspend fun updateAllStatusAndResetRetries(fromStatuses: List<String>, toStatus: String, statusText: String, speedText: String, etaText: String) {
+            tasks.values.filter { it.status in fromStatuses }.forEach {
+                tasks[it.id] = it.copy(status = toStatus, statusText = statusText, speedText = speedText, etaText = etaText, retryCount = 0, nextRetryAt = null)
+            }
+            tasksFlow.value = tasks.values.toList()
+        }
+
+        override suspend fun updateRetryState(id: String, status: String, statusText: String, speedText: String, etaText: String, retryCount: Int, nextRetryAt: Long) {
+            tasks[id]?.let { existing ->
+                tasks[id] = existing.copy(status = status, statusText = statusText, speedText = speedText, etaText = etaText, retryCount = retryCount, nextRetryAt = nextRetryAt)
+                tasksFlow.value = tasks.values.toList()
+            }
+        }
+
+        override suspend fun resetRetryState(id: String) {
+            tasks[id]?.let { existing ->
+                tasks[id] = existing.copy(retryCount = 0, nextRetryAt = null)
+                tasksFlow.value = tasks.values.toList()
+            }
+        }
+
         override suspend fun retryTask(id: String, status: String, statusText: String, progress: Float, speedText: String, etaText: String) {
             tasks[id]?.let {
                 tasks[id] = it.copy(status = status, statusText = statusText, progress = progress, speedText = speedText, etaText = etaText)
@@ -483,11 +504,16 @@ class DownloadCoordinatorOrderingUnitTest {
             }
         }
 
-        override suspend fun findOldestQueued(limit: Int): List<DownloadTaskEntity> {
+        override suspend fun findOldestQueued(limit: Int, now: Long): List<DownloadTaskEntity> {
             return tasks.values
-                .filter { it.status == TaskStatus.QUEUED.name }
+                .filter { it.status == TaskStatus.QUEUED.name && (it.nextRetryAt == null || it.nextRetryAt <= now) }
                 .sortedWith(compareBy<DownloadTaskEntity> { it.createdAt }.thenBy { it.id })
                 .take(limit)
+        }
+
+        override suspend fun getPendingRetries(now: Long): List<DownloadTaskEntity> {
+            return tasks.values
+                .filter { it.status == TaskStatus.QUEUED.name && it.nextRetryAt != null && it.nextRetryAt > now }
         }
 
         override suspend fun findByUrl(url: String): List<DownloadTaskEntity> {

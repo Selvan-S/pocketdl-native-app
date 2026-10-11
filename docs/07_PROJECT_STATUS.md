@@ -136,8 +136,8 @@ pocketdl-native/
 
 - Installed/configured: **VERIFIED**
 - Gradle build (`assembleDebug`): **VERIFIED SUCCESSFUL**
-- Automated tests (`./gradlew testDebugUnitTest`): **PASSING (100% pass rate: 94 tests passing)**
-- Device Run/Verification: **VERIFIED on physical connected Samsung Galaxy S22 Ultra via ADB (`versionCode=2`, `versionName=1.0.0-p8.1` confirmed via dumpsys package; clean app launch confirmed).**
+- Automated tests (`./gradlew testDebugUnitTest`): **PASSING (100% pass rate: 98 tests passing)**
+- Device Run/Verification: **VERIFIED on physical connected Samsung Galaxy S22 Ultra via ADB (`versionCode=3`, `versionName=1.0.0-p8.2` confirmed via dumpsys package; clean app launch confirmed).**
 
 ---
 
@@ -153,8 +153,8 @@ pocketdl-native/
 | 6 | Direct HTTP Download Engine | COMPLETED |
 | 7 | Background Execution + Notifications | COMPLETED |
 | 8.1 | Concurrency & Worker Hardening | COMPLETED |
-| 8.2 | Restart Recovery & Retry Budget | NEXT UP |
-| 8.3 | Network & Storage Constraints | NOT STARTED |
+| 8.2 | Restart Recovery & Retry Budget | COMPLETED |
+| 8.3 | Network & Storage Constraints | NEXT UP |
 | 9 | Extension Capture Protocol | NOT STARTED |
 | 10 | Real Browser Extension Integration | NOT STARTED |
 | 11 | HLS Support | NOT STARTED |

@@ -124,11 +124,23 @@ open class DownloadCoordinator(
     private suspend fun reconcileStartupStateInternal() {
         downloadTaskDao.updateAllStatus(
             fromStatuses = listOf(TaskStatus.DOWNLOADING.name),
-            toStatus = TaskStatus.PAUSED.name,
-            statusText = "Paused",
+            toStatus = TaskStatus.QUEUED.name,
+            statusText = "Queued",
             speedText = "0 KB/s",
-            etaText = "Paused"
+            etaText = "Waiting"
         )
+        val now = System.currentTimeMillis()
+        val pending = downloadTaskDao.getPendingRetries(now)
+        for (task in pending) {
+            val nextRetryAt = task.nextRetryAt ?: continue
+            val delayMs = nextRetryAt - System.currentTimeMillis()
+            if (delayMs > 0) {
+                coordinatorScope.launch(ioDispatcher) {
+                    kotlinx.coroutines.delay(delayMs)
+                    dispatchQueueInternal()
+                }
+            }
+        }
     }
 
     fun isRunning(taskId: String): Boolean = activeJobs.containsKey(taskId)
@@ -151,6 +163,7 @@ open class DownloadCoordinator(
                 !activeJobs.containsKey(taskId) && !reservedTasks.containsKey(taskId) && !retiringJobs.containsKey(taskId)
             }
             if (shouldEnqueue) {
+                downloadTaskDao.resetRetryState(taskId) // Reset timer and counters
                 if (task.status != TaskStatus.DOWNLOADING.name) {
                     downloadTaskDao.updateStatus(
                         id = taskId,
@@ -597,7 +610,7 @@ open class DownloadCoordinator(
     override fun startAll() {
         coordinatorScope.launch(ioDispatcher) {
             ensureInitialized()
-            downloadTaskDao.updateAllStatus(
+            downloadTaskDao.updateAllStatusAndResetRetries(
                 fromStatuses = listOf(TaskStatus.PAUSED.name),
                 toStatus = TaskStatus.QUEUED.name,
                 statusText = "Queued",
@@ -806,19 +819,58 @@ open class DownloadCoordinator(
                     }
                 }
                 is DownloadResult.Failure -> {
-                    val errMsg = result.error.localizedMessage?.take(40) ?: "Download failed"
-                    downloadTaskDao.updateStatus(
-                        id = taskId,
-                        status = TaskStatus.FAILED.name,
-                        statusText = "Failed: $errMsg",
-                        speedText = "0 KB/s",
-                        etaText = "--:--"
-                    )
+                    val error = result.error
+                    val isTransient = when (error) {
+                        is HttpException -> error.code in listOf(408, 429, 500, 502, 503, 504)
+                        is java.net.SocketTimeoutException,
+                        is java.net.UnknownHostException,
+                        is java.net.ConnectException,
+                        is java.net.SocketException,
+                        is java.io.EOFException -> true
+                        is java.io.IOException -> {
+                            val msg = error.message ?: ""
+                            !msg.contains("ENOSPC", ignoreCase = true) &&
+                            !msg.contains("No space left", ignoreCase = true) &&
+                            !msg.contains("EACCES", ignoreCase = true) &&
+                            !msg.contains("Permission denied", ignoreCase = true)
+                        }
+                        else -> false
+                    }
 
-                    applicationContext?.let { ctx ->
-                        val notifManager = DownloadNotificationManager(ctx)
-                        val notif = notifManager.buildFailureNotification(taskId, task.title, errMsg)
-                        notifManager.postNotification(taskId.hashCode(), notif)
+                    if (isTransient && currentInDb.retryCount < 5) {
+                        val newRetryCount = currentInDb.retryCount + 1
+                        val backoffMs = (2000L * (1L shl currentInDb.retryCount)).coerceAtMost(60_000L)
+                        val nextRetryAt = System.currentTimeMillis() + backoffMs
+
+                        downloadTaskDao.updateRetryState(
+                            id = taskId,
+                            status = TaskStatus.QUEUED.name,
+                            statusText = "Retrying in ${backoffMs / 1000}s",
+                            speedText = "Waiting",
+                            etaText = "Retry ${newRetryCount}/5",
+                            retryCount = newRetryCount,
+                            nextRetryAt = nextRetryAt
+                        )
+
+                        coordinatorScope.launch(ioDispatcher) {
+                            kotlinx.coroutines.delay(backoffMs)
+                            dispatchQueueInternal()
+                        }
+                    } else {
+                        val errMsg = result.error.localizedMessage?.take(40) ?: "Download failed"
+                        downloadTaskDao.updateStatus(
+                            id = taskId,
+                            status = TaskStatus.FAILED.name,
+                            statusText = "Failed: $errMsg",
+                            speedText = "0 KB/s",
+                            etaText = "--:--"
+                        )
+
+                        applicationContext?.let { ctx ->
+                            val notifManager = DownloadNotificationManager(ctx)
+                            val notif = notifManager.buildFailureNotification(taskId, task.title, errMsg)
+                            notifManager.postNotification(taskId.hashCode(), notif)
+                        }
                     }
                 }
                 is DownloadResult.Paused -> {

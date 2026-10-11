@@ -20,7 +20,7 @@ import com.pocketdl.app.data.database.migrations.DatabaseMigrations
         MediaVariantEntity::class,
         DownloadTaskEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class PocketDlDatabase : RoomDatabase() {

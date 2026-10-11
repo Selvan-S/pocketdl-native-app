@@ -148,7 +148,7 @@ class OkHttpDownloadEngine(
                 val errorCode = response.code
                 val errorMsg = response.message
                 response.close()
-                throw IOException("HTTP error $errorCode: $errorMsg")
+                throw HttpException(errorCode, "HTTP error $errorCode: $errorMsg")
             }
 
             val body = response.body ?: throw IOException("Empty response body from $url")

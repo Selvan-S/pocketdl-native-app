@@ -152,10 +152,12 @@ class RoomPersistenceUnitTest {
     }
 
     @Test
-    fun databaseMigrations_structureRegistersMigration1To2() {
+    fun databaseMigrations_structureRegistersMigrations() {
         assertNotNull(DatabaseMigrations.ALL_MIGRATIONS)
-        assertEquals(1, DatabaseMigrations.ALL_MIGRATIONS.size)
+        assertEquals(2, DatabaseMigrations.ALL_MIGRATIONS.size)
         assertEquals(1, DatabaseMigrations.MIGRATION_1_2.startVersion)
         assertEquals(2, DatabaseMigrations.MIGRATION_1_2.endVersion)
+        assertEquals(2, DatabaseMigrations.MIGRATION_2_3.startVersion)
+        assertEquals(3, DatabaseMigrations.MIGRATION_2_3.endVersion)
     }
 }

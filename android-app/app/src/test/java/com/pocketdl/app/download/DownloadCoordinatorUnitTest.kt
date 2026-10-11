@@ -152,7 +152,7 @@ class DownloadCoordinatorUnitTest {
         assertTrue(coordinator.isRunning("t2"))
 
         // Fail task1 with HTTP 403
-        fakeEngine.failTask("t1", java.io.IOException("HTTP error 403: Forbidden"))
+        fakeEngine.failTask("t1", HttpException(403, "HTTP error 403: Forbidden"))
         advanceUntilIdle()
 
         // task1 is marked FAILED and no longer running
@@ -199,12 +199,12 @@ class DownloadCoordinatorUnitTest {
         startupCoordinator.ensureInitialized()
         advanceUntilIdle()
 
-        // 1. DOWNLOADING task transitioned to PAUSED with reset speed/ETA
+        // 1. DOWNLOADING task transitioned to QUEUED with reset speed/ETA
         val reconciled = freshDao.findById("dl1")
-        assertEquals(TaskStatus.PAUSED.name, reconciled?.status)
-        assertEquals("Paused", reconciled?.statusText)
+        assertEquals(TaskStatus.QUEUED.name, reconciled?.status)
+        assertEquals("Queued", reconciled?.statusText)
         assertEquals("0 KB/s", reconciled?.speedText)
-        assertEquals("Paused", reconciled?.etaText)
+        assertEquals("Waiting", reconciled?.etaText)
 
         // 2. Metadata strictly preserved
         assertEquals(0.65f, reconciled?.progress)
@@ -397,6 +397,27 @@ class DownloadCoordinatorUnitTest {
             tasksFlow.value = tasks.values.toList()
         }
 
+        override suspend fun updateAllStatusAndResetRetries(fromStatuses: List<String>, toStatus: String, statusText: String, speedText: String, etaText: String) {
+            tasks.values.filter { it.status in fromStatuses }.forEach {
+                tasks[it.id] = it.copy(status = toStatus, statusText = statusText, speedText = speedText, etaText = etaText, retryCount = 0, nextRetryAt = null)
+            }
+            tasksFlow.value = tasks.values.toList()
+        }
+
+        override suspend fun updateRetryState(id: String, status: String, statusText: String, speedText: String, etaText: String, retryCount: Int, nextRetryAt: Long) {
+            tasks[id]?.let { existing ->
+                tasks[id] = existing.copy(status = status, statusText = statusText, speedText = speedText, etaText = etaText, retryCount = retryCount, nextRetryAt = nextRetryAt)
+                tasksFlow.value = tasks.values.toList()
+            }
+        }
+
+        override suspend fun resetRetryState(id: String) {
+            tasks[id]?.let { existing ->
+                tasks[id] = existing.copy(retryCount = 0, nextRetryAt = null)
+                tasksFlow.value = tasks.values.toList()
+            }
+        }
+
         override suspend fun retryTask(id: String, status: String, statusText: String, progress: Float, speedText: String, etaText: String) {
             tasks[id]?.let {
                 tasks[id] = it.copy(status = status, statusText = statusText, progress = progress, speedText = speedText, etaText = etaText)
@@ -404,11 +425,16 @@ class DownloadCoordinatorUnitTest {
             }
         }
 
-        override suspend fun findOldestQueued(limit: Int): List<DownloadTaskEntity> {
+        override suspend fun findOldestQueued(limit: Int, now: Long): List<DownloadTaskEntity> {
             return tasks.values
-                .filter { it.status == TaskStatus.QUEUED.name }
+                .filter { it.status == TaskStatus.QUEUED.name && (it.nextRetryAt == null || it.nextRetryAt <= now) }
                 .sortedWith(compareBy<DownloadTaskEntity> { it.createdAt }.thenBy { it.id })
                 .take(limit)
+        }
+
+        override suspend fun getPendingRetries(now: Long): List<DownloadTaskEntity> {
+            return tasks.values
+                .filter { it.status == TaskStatus.QUEUED.name && it.nextRetryAt != null && it.nextRetryAt > now }
         }
 
         override suspend fun findByUrl(url: String): List<DownloadTaskEntity> {

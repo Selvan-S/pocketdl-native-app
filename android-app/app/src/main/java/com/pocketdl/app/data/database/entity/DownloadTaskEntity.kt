@@ -71,5 +71,11 @@ data class DownloadTaskEntity(
     val etag: String? = null,
 
     @ColumnInfo(name = "last_modified")
-    val lastModified: String? = null
+    val lastModified: String? = null,
+
+    @ColumnInfo(name = "retry_count")
+    val retryCount: Int = 0,
+
+    @ColumnInfo(name = "next_retry_at")
+    val nextRetryAt: Long? = null
 )

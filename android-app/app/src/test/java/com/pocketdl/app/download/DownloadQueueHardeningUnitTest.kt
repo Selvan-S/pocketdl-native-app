@@ -590,6 +590,145 @@ class DownloadQueueHardeningUnitTest {
         assertEquals("Active jobs count must become 0", 0, coordinator.activeJobsCount.value)
     }
 
+    @Test
+    fun retryPolicy_transientError_respectsMaxRetries() = runTest(testDispatcher) {
+        val coordinator = DownloadCoordinator(
+            engine = fakeEngine,
+            downloadTaskDao = fakeDao,
+            settingsRepository = settingsRepo,
+            destinationDirProvider = { tempDir },
+            coordinatorScope = testScope,
+            ioDispatcher = testDispatcher
+        )
+
+        val task = createTask("t_retry")
+        fakeDao.insert(task)
+
+        coordinator.startTask("t_retry")
+        advanceUntilIdle()
+
+        for (i in 0..4) {
+            fakeDao.timeOffsetMs = 0L
+            fakeEngine.failTask("t_retry", java.net.SocketTimeoutException("Timeout"))
+            testDispatcher.scheduler.runCurrent()
+
+            val inDb = fakeDao.findById("t_retry")
+            assertNotNull(inDb)
+            assertEquals("QUEUED", inDb?.status)
+            assertEquals(i + 1, inDb?.retryCount)
+            assertNotNull(inDb?.nextRetryAt)
+
+            fakeDao.timeOffsetMs = 65000
+            advanceTimeBy(65000)
+            advanceUntilIdle()
+            assertTrue(coordinator.isRunning("t_retry"))
+        }
+
+        fakeDao.timeOffsetMs = 0L
+            fakeEngine.failTask("t_retry", java.net.SocketTimeoutException("Timeout"))
+        advanceUntilIdle()
+
+        val finalDb = fakeDao.findById("t_retry")
+        assertEquals("FAILED", finalDb?.status)
+        assertFalse(coordinator.isRunning("t_retry"))
+    }
+
+    @Test
+    fun retryPolicy_permanentError_failsImmediately() = runTest(testDispatcher) {
+        val coordinator = DownloadCoordinator(
+            engine = fakeEngine,
+            downloadTaskDao = fakeDao,
+            settingsRepository = settingsRepo,
+            destinationDirProvider = { tempDir },
+            coordinatorScope = testScope,
+            ioDispatcher = testDispatcher
+        )
+
+        val task = createTask("t_perm_err")
+        fakeDao.insert(task)
+
+        coordinator.startTask("t_perm_err")
+        advanceUntilIdle()
+
+        fakeDao.timeOffsetMs = 0L
+            fakeEngine.failTask("t_perm_err", java.io.IOException("No space left on device"))
+        advanceUntilIdle()
+
+        val finalDb = fakeDao.findById("t_perm_err")
+        assertEquals("FAILED", finalDb?.status)
+        assertEquals(0, finalDb?.retryCount)
+    }
+
+    @Test
+    fun retryPolicy_staleTimer_ignoredIfPaused() = runTest(testDispatcher) {
+        val coordinator = DownloadCoordinator(
+            engine = fakeEngine,
+            downloadTaskDao = fakeDao,
+            settingsRepository = settingsRepo,
+            destinationDirProvider = { tempDir },
+            coordinatorScope = testScope,
+            ioDispatcher = testDispatcher
+        )
+
+        val task = createTask("t_stale")
+        fakeDao.insert(task)
+
+        coordinator.startTask("t_stale")
+        advanceUntilIdle()
+
+        fakeDao.timeOffsetMs = 0L
+            fakeEngine.failTask("t_stale", java.net.SocketTimeoutException("Timeout"))
+        testDispatcher.scheduler.runCurrent()
+
+        val inDb = fakeDao.findById("t_stale")
+        assertEquals("QUEUED", inDb?.status)
+        assertEquals(1, inDb?.retryCount)
+
+        coordinator.pauseTask("t_stale")
+        advanceUntilIdle()
+
+        fakeDao.timeOffsetMs = 65000
+            advanceTimeBy(65000)
+        advanceUntilIdle()
+
+        val pausedDb = fakeDao.findById("t_stale")
+        assertEquals("PAUSED", pausedDb?.status)
+        assertFalse(coordinator.isRunning("t_stale"))
+    }
+
+    @Test
+    fun retryPolicy_manualStart_resetsTimerAndCounters() = runTest(testDispatcher) {
+        val coordinator = DownloadCoordinator(
+            engine = fakeEngine,
+            downloadTaskDao = fakeDao,
+            settingsRepository = settingsRepo,
+            destinationDirProvider = { tempDir },
+            coordinatorScope = testScope,
+            ioDispatcher = testDispatcher
+        )
+
+        val task = createTask("t_manual_start")
+        fakeDao.insert(task)
+
+        coordinator.startTask("t_manual_start")
+        advanceUntilIdle()
+
+        fakeDao.timeOffsetMs = 0L
+            fakeEngine.failTask("t_manual_start", java.net.SocketTimeoutException("Timeout"))
+        testDispatcher.scheduler.runCurrent()
+
+        val inDb = fakeDao.findById("t_manual_start")
+        assertEquals(1, inDb?.retryCount)
+
+        coordinator.startTask("t_manual_start")
+        advanceUntilIdle()
+
+        val freshDb = fakeDao.findById("t_manual_start")
+        assertEquals(0, freshDb?.retryCount)
+        assertNull(freshDb?.nextRetryAt)
+        assertTrue(coordinator.isRunning("t_manual_start"))
+    }
+
     private fun createTask(id: String, createdAt: Long = System.currentTimeMillis()) = DownloadTaskEntity(
         id = id,
         title = "Video $id",
@@ -637,6 +776,10 @@ class DownloadQueueHardeningUnitTest {
             )
         }
 
+        fun failTask(taskId: String, error: Throwable) {
+            runningDeferreds[taskId]?.complete(DownloadResult.Failure(error))
+        }
+
         override fun pause(taskId: String) {
             runningDeferreds[taskId]?.complete(DownloadResult.Paused)
         }
@@ -647,6 +790,7 @@ class DownloadQueueHardeningUnitTest {
     }
 
     private class FakeDownloadTaskDao : DownloadTaskDao {
+        var timeOffsetMs: Long = 0L
         private val tasks = ConcurrentHashMap<String, DownloadTaskEntity>()
         private val tasksFlow = MutableStateFlow<List<DownloadTaskEntity>>(emptyList())
 
@@ -683,6 +827,27 @@ class DownloadQueueHardeningUnitTest {
             tasksFlow.value = tasks.values.toList()
         }
 
+        override suspend fun updateAllStatusAndResetRetries(fromStatuses: List<String>, toStatus: String, statusText: String, speedText: String, etaText: String) {
+            tasks.values.filter { it.status in fromStatuses }.forEach {
+                tasks[it.id] = it.copy(status = toStatus, statusText = statusText, speedText = speedText, etaText = etaText, retryCount = 0, nextRetryAt = null)
+            }
+            tasksFlow.value = tasks.values.toList()
+        }
+
+        override suspend fun updateRetryState(id: String, status: String, statusText: String, speedText: String, etaText: String, retryCount: Int, nextRetryAt: Long) {
+            tasks[id]?.let { existing ->
+                tasks[id] = existing.copy(status = status, statusText = statusText, speedText = speedText, etaText = etaText, retryCount = retryCount, nextRetryAt = nextRetryAt)
+                tasksFlow.value = tasks.values.toList()
+            }
+        }
+
+        override suspend fun resetRetryState(id: String) {
+            tasks[id]?.let { existing ->
+                tasks[id] = existing.copy(retryCount = 0, nextRetryAt = null)
+                tasksFlow.value = tasks.values.toList()
+            }
+        }
+
         override suspend fun retryTask(id: String, status: String, statusText: String, progress: Float, speedText: String, etaText: String) {
             tasks[id]?.let {
                 tasks[id] = it.copy(status = status, statusText = statusText, progress = progress, speedText = speedText, etaText = etaText)
@@ -690,11 +855,18 @@ class DownloadQueueHardeningUnitTest {
             }
         }
 
-        override suspend fun findOldestQueued(limit: Int): List<DownloadTaskEntity> {
+        override suspend fun findOldestQueued(limit: Int, now: Long): List<DownloadTaskEntity> {
+            val effectiveNow = System.currentTimeMillis() + timeOffsetMs
             return tasks.values
-                .filter { it.status == TaskStatus.QUEUED.name }
+                .filter { it.status == TaskStatus.QUEUED.name && (it.nextRetryAt == null || it.nextRetryAt <= effectiveNow) }
                 .sortedWith(compareBy<DownloadTaskEntity> { it.createdAt }.thenBy { it.id })
                 .take(limit)
+        }
+
+        override suspend fun getPendingRetries(now: Long): List<DownloadTaskEntity> {
+            val effectiveNow = System.currentTimeMillis() + timeOffsetMs
+            return tasks.values
+                .filter { it.status == TaskStatus.QUEUED.name && it.nextRetryAt != null && it.nextRetryAt > effectiveNow }
         }
 
         override suspend fun findByUrl(url: String): List<DownloadTaskEntity> {
