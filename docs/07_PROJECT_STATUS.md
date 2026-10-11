@@ -16,11 +16,11 @@
 
 **Primary stack:** Kotlin + Jetpack Compose
 
-**Current Phase:** Phase 7 — Background Execution & Notifications / COMPLETED
+**Current Phase:** Phase 8 — Download Manager Hardening / IN PROGRESS (Checkpoint 8.2 COMPLETED)
 
-**Status:** PHASE 7 COMPLETED. FOREGROUND SERVICE + REAL-TIME NOTIFICATIONS OPERATIONAL AND VERIFIED ON DEVICE. READY FOR PHASE 8 (DOWNLOAD MANAGER HARDENING).
+**Status:** CHECKPOINT 8.2 COMPLETED. RESTART RECOVERY & RETRY BUDGET VERIFIED. READY FOR CHECKPOINT 8.3 (NETWORK & STORAGE CONSTRAINTS).
 
-**Last updated:** 2026-10-10
+**Last updated:** 2026-10-11
 
 ---
 
@@ -92,9 +92,13 @@ pocketdl-native/
     ├── 09_PHASE_HANDOFF_TEMPLATE.md
     ├── DESIGN.md
     └── handoffs/
+        ├── CHECKPOINT_8.1_HANDOFF.md
+        ├── CHECKPOINT_8.2_HANDOFF.md
         ├── PHASE_1_HANDOFF.md
         ├── PHASE_2_HANDOFF.md
-        └── PHASE_3_HANDOFF.md
+        ├── PHASE_3_HANDOFF.md
+        ├── PHASE_4_ROOM_PERSISTENCE_HANDOFF.md
+        └── PHASE_7_HANDOFF.md
 ```
 
 ---
@@ -136,8 +140,8 @@ pocketdl-native/
 
 - Installed/configured: **VERIFIED**
 - Gradle build (`assembleDebug`): **VERIFIED SUCCESSFUL**
-- Automated tests (`./gradlew testDebugUnitTest`): **PASSING (100% pass rate: 98 tests passing)**
-- Device Run/Verification: **VERIFIED on physical connected Samsung Galaxy S22 Ultra via ADB (`versionCode=3`, `versionName=1.0.0-p8.2` confirmed via dumpsys package; clean app launch confirmed).**
+- Automated tests (`./gradlew testDebugUnitTest`): **PASSING (100% pass rate: 99 tests passing)**
+- Device Run/Verification: **VERIFIED on physical connected Samsung Galaxy S22 Ultra (`SM-S908E`, `RZCT92A9L3E`) via ADB fresh install (`versionCode=3`, `versionName=1.0.0-p8.2` confirmed via dumpsys package; clean app launch confirmed; Settings screen visibly confirmed displaying `PocketDL v1.0.0-p8.2 (3)`).**
 
 ---
 
@@ -169,4 +173,4 @@ pocketdl-native/
 
 ## Next Action
 
-Proceed to **Checkpoint 8.2 — Restart Recovery & Retry Budget** (reconciling in-flight downloads after process death, bounded retry attempts, exponential backoff, and network constraint checks).
+Proceed to **Checkpoint 8.3 — Network & Storage Constraints** (metered network toggles, storage space pre-checks before download, and network disconnect recovery).
