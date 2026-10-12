@@ -7,6 +7,7 @@ import okhttp3.Call
 import java.io.IOException
 
 class HttpException(val code: Int, message: String) : IOException(message)
+class InsufficientStorageException(val requiredBytes: Long, val availableBytes: Long, message: String) : IOException(message)
 
 /**
  * Progress payload emitted during an active streaming download.

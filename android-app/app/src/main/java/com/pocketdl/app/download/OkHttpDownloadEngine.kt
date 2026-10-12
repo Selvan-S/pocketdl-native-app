@@ -1,5 +1,8 @@
 package com.pocketdl.app.download
 
+import com.pocketdl.app.core.storage.DefaultStorageSpaceChecker
+import com.pocketdl.app.core.storage.StoragePolicy
+import com.pocketdl.app.core.storage.StorageSpaceChecker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -22,7 +25,8 @@ import java.util.concurrent.TimeUnit
  */
 class OkHttpDownloadEngine(
     private val client: OkHttpClient = defaultClient(),
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val storageChecker: StorageSpaceChecker = DefaultStorageSpaceChecker()
 ) : DownloadEngine {
 
     private val activeJobs = ConcurrentHashMap<String, DownloadJobHandle>()
@@ -186,6 +190,27 @@ class OkHttpDownloadEngine(
                 resumeOffset = 0L
                 effectivePartFile.delete()
                 totalBytes = body.contentLength()
+            }
+
+            // Post-header storage verification using authentic server byte count
+            val remainingBytes = if (isPartial) {
+                body.contentLength()
+            } else {
+                (totalBytes - resumeOffset).coerceAtLeast(0L)
+            }
+            val parentDir = effectivePartFile.parentFile ?: File(".")
+            val required = StoragePolicy.calculateRequiredBytes(
+                expectedTotalBytes = if (remainingBytes > 0L) (resumeOffset + remainingBytes) else null,
+                existingBytes = resumeOffset
+            )
+            val available = storageChecker.getUsableSpace(parentDir)
+            if (available < required) {
+                response.close()
+                throw InsufficientStorageException(
+                    requiredBytes = required,
+                    availableBytes = available,
+                    message = "Insufficient storage space: $required bytes required ($available available)"
+                )
             }
 
             randomAccessFile = RandomAccessFile(effectivePartFile, "rw")

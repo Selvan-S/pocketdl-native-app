@@ -1,5 +1,14 @@
 package com.pocketdl.app.download
 
+import com.pocketdl.app.core.network.ConnectionType
+import com.pocketdl.app.core.network.NetworkConnectivityObserver
+import com.pocketdl.app.core.network.NetworkState
+import com.pocketdl.app.core.network.PermissiveNetworkConnectivityObserver
+import com.pocketdl.app.core.storage.DefaultStorageSpaceChecker
+import com.pocketdl.app.core.storage.StoragePolicy
+import com.pocketdl.app.core.storage.StorageSpaceChecker
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import android.content.Context
 import android.content.Intent
 import com.pocketdl.app.data.database.dao.DownloadTaskDao
@@ -52,7 +61,9 @@ open class DownloadCoordinator(
     private val coordinatorScope: CoroutineScope,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val applicationContext: Context? = null,
-    private val startServiceLauncher: ((Context?) -> Unit)? = null
+    private val startServiceLauncher: ((Context?) -> Unit)? = null,
+    private val networkObserver: NetworkConnectivityObserver = PermissiveNetworkConnectivityObserver,
+    private val storageChecker: StorageSpaceChecker = DefaultStorageSpaceChecker()
 ) : DownloadActionHandler {
     private val activeJobs = ConcurrentHashMap<String, Job>()
     private val retiringJobs = ConcurrentHashMap<String, Job>()
@@ -85,6 +96,20 @@ open class DownloadCoordinator(
                     _serviceForegroundState.value = ServiceForegroundResult.Idle
                 }
                 cleanupJob.cancel()
+            }
+        }
+
+        coordinatorScope.launch(ioDispatcher) {
+            ensureInitialized()
+            combine(
+                networkObserver.observeNetworkState(),
+                settingsRepository.observeSettings()
+            ) { netState, settings ->
+                Pair(netState, settings.allowCellular)
+            }
+            .distinctUntilChanged()
+            .collect { (netState, allowCellular) ->
+                handleNetworkOrSettingsChange(netState, allowCellular)
             }
         }
     }
@@ -178,6 +203,87 @@ open class DownloadCoordinator(
         }
     }
 
+    private fun isNetworkPermitted(networkState: NetworkState, allowCellular: Boolean): Boolean {
+        if (!networkState.isConnected) return false
+        if (networkState.isMetered && !allowCellular) return false
+        return true
+    }
+
+    private fun getConstraintReason(networkState: NetworkState): String {
+        return if (!networkState.isConnected) {
+            "Waiting for Network"
+        } else {
+            "Waiting for an unmetered network"
+        }
+    }
+
+    private var lastPermittedState: Boolean? = null
+
+    private suspend fun handleNetworkOrSettingsChange(netState: NetworkState, allowCellular: Boolean) {
+        val permitted = isNetworkPermitted(netState, allowCellular)
+        val wasPermitted = lastPermittedState
+        lastPermittedState = permitted
+
+        if (wasPermitted == null) {
+            if (!permitted) {
+                val reason = getConstraintReason(netState)
+                interruptActiveWorkersForConstraint(reason)
+            }
+            return
+        }
+
+        if (wasPermitted != permitted) {
+            if (!permitted) {
+                val reason = getConstraintReason(netState)
+                interruptActiveWorkersForConstraint(reason)
+            } else {
+                dispatchQueueInternal()
+            }
+        }
+    }
+
+    private suspend fun interruptActiveWorkersForConstraint(reason: String) {
+        val jobsToCancel = mutableListOf<Pair<String, Job>>()
+        mutex.withLock {
+            for ((taskId, job) in activeJobs) {
+                retiringJobs[taskId] = job
+                jobsToCancel.add(Pair(taskId, job))
+            }
+            activeJobs.clear()
+            _activeJobsCount.value = 0
+            if (jobsToCancel.isNotEmpty()) {
+                _serviceForegroundState.value = ServiceForegroundResult.Idle
+                _activeNotificationState.value = null
+            }
+        }
+
+        for ((taskId, _) in jobsToCancel) {
+            engine.pause(taskId)
+        }
+        for ((_, job) in jobsToCancel) {
+            job.cancel()
+        }
+        for ((taskId, job) in jobsToCancel) {
+            job.join()
+            mutex.withLock {
+                retiringJobs.remove(taskId, job)
+            }
+        }
+
+        for ((taskId, _) in jobsToCancel) {
+            val currentInDb = downloadTaskDao.findById(taskId)
+            if (currentInDb != null && currentInDb.status != TaskStatus.COMPLETED.name && currentInDb.status != TaskStatus.FAILED.name) {
+                downloadTaskDao.updateStatus(
+                    id = taskId,
+                    status = TaskStatus.QUEUED.name,
+                    statusText = reason,
+                    speedText = "0 KB/s",
+                    etaText = "Waiting"
+                )
+            }
+        }
+    }
+
     /**
      * Dispatches queued tasks up to available maxParallel capacity.
      */
@@ -189,6 +295,14 @@ open class DownloadCoordinator(
 
     private suspend fun dispatchQueueInternal() {
         if (!coordinatorScope.isActive) return
+
+        val netState = networkObserver.currentNetworkState()
+        val allowCellular = try {
+            settingsRepository.observeSettings().first().allowCellular
+        } catch (_: Exception) {
+            false
+        }
+        if (!isNetworkPermitted(netState, allowCellular)) return
 
         val (availableSlots, fetchLimit) = mutex.withLock {
             val maxParallel = getMaxParallel()
@@ -706,7 +820,48 @@ open class DownloadCoordinator(
                 )
             }
 
-            if (!isJobCurrent(taskId, currentJob)) return
+            val partFile = DownloadFileUtils.resolvePartFile(destFile)
+            val existingBytes = if (partFile.exists()) partFile.length() else 0L
+
+            // Pre-flight storage check on destination filesystem
+            val targetDir = destFile.parentFile ?: downloadDir
+            val expectedTotalBytes = StoragePolicy.parseBytesFromText(task.totalSizeText)
+            val hasSpace = StoragePolicy.hasSufficientSpace(
+                storageChecker = storageChecker,
+                destinationDir = targetDir,
+                expectedTotalBytes = expectedTotalBytes,
+                existingBytes = existingBytes
+            )
+
+            if (!hasSpace) {
+                downloadTaskDao.updateStatus(
+                    id = taskId,
+                    status = TaskStatus.FAILED.name,
+                    statusText = "Failed: Insufficient storage",
+                    speedText = "0 KB/s",
+                    etaText = "--:--"
+                )
+                return
+            }
+
+            // Pre-flight network check
+            val netState = networkObserver.currentNetworkState()
+            val allowCellular = try {
+                settingsRepository.observeSettings().first().allowCellular
+            } catch (_: Exception) {
+                false
+            }
+            if (!isNetworkPermitted(netState, allowCellular)) {
+                val reason = getConstraintReason(netState)
+                downloadTaskDao.updateStatus(
+                    id = taskId,
+                    status = TaskStatus.QUEUED.name,
+                    statusText = reason,
+                    speedText = "0 KB/s",
+                    etaText = "Waiting"
+                )
+                return
+            }
 
             // Persist destination path before streaming bytes (Room call OUTSIDE mutex)
             downloadTaskDao.updateProgress(
@@ -820,6 +975,46 @@ open class DownloadCoordinator(
                 }
                 is DownloadResult.Failure -> {
                     val error = result.error
+
+                    val isStorageFull = error is InsufficientStorageException || (
+                        error is java.io.IOException && (
+                            error.message?.contains("ENOSPC", ignoreCase = true) == true ||
+                            error.message?.contains("No space left", ignoreCase = true) == true
+                        )
+                    )
+
+                    if (isStorageFull) {
+                        val reason = if (error is InsufficientStorageException) "Failed: Insufficient storage" else "Failed: Storage full"
+                        downloadTaskDao.updateStatus(
+                            id = taskId,
+                            status = TaskStatus.FAILED.name,
+                            statusText = reason,
+                            speedText = "0 KB/s",
+                            etaText = "--:--"
+                        )
+                        return
+                    }
+
+                    // Check if interrupted by network loss / metered constraint
+                    val currentNet = networkObserver.currentNetworkState()
+                    val currentAllowCellular = try {
+                        settingsRepository.observeSettings().first().allowCellular
+                    } catch (_: Exception) {
+                        false
+                    }
+
+                    if (!isNetworkPermitted(currentNet, currentAllowCellular)) {
+                        val reason = getConstraintReason(currentNet)
+                        downloadTaskDao.updateStatus(
+                            id = taskId,
+                            status = TaskStatus.QUEUED.name,
+                            statusText = reason,
+                            speedText = "0 KB/s",
+                            etaText = "Waiting"
+                        )
+                        return
+                    }
+
                     val isTransient = when (error) {
                         is HttpException -> error.code in listOf(408, 429, 500, 502, 503, 504)
                         is java.net.SocketTimeoutException,
@@ -893,14 +1088,31 @@ open class DownloadCoordinator(
                 val currentInDb = downloadTaskDao.findById(taskId)
                 if (currentInDb != null && currentInDb.status != TaskStatus.COMPLETED.name) {
                     if (isJobCurrent(taskId, currentJob)) {
-                        val msg = e.localizedMessage?.take(40) ?: "Error"
-                        downloadTaskDao.updateStatus(
-                            id = taskId,
-                            status = TaskStatus.FAILED.name,
-                            statusText = "Failed: $msg",
-                            speedText = "0 KB/s",
-                            etaText = "--:--"
-                        )
+                        val currentNet = networkObserver.currentNetworkState()
+                        val allowCellular = try {
+                            settingsRepository.observeSettings().first().allowCellular
+                        } catch (_: Exception) {
+                            false
+                        }
+                        if (!isNetworkPermitted(currentNet, allowCellular)) {
+                            val reason = getConstraintReason(currentNet)
+                            downloadTaskDao.updateStatus(
+                                id = taskId,
+                                status = TaskStatus.QUEUED.name,
+                                statusText = reason,
+                                speedText = "0 KB/s",
+                                etaText = "Waiting"
+                            )
+                        } else {
+                            val msg = e.localizedMessage?.take(40) ?: "Error"
+                            downloadTaskDao.updateStatus(
+                                id = taskId,
+                                status = TaskStatus.FAILED.name,
+                                statusText = "Failed: $msg",
+                                speedText = "0 KB/s",
+                                etaText = "--:--"
+                            )
+                        }
                     }
                 }
             }

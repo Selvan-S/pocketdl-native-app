@@ -14,8 +14,8 @@ android {
         applicationId = "com.pocketdl.app"
         minSdk = 24
         targetSdk = 37
-        versionCode = 3
-        versionName = "1.0.0-p8.2"
+        versionCode = 4
+        versionName = "1.0.0-p8.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

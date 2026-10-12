@@ -16,6 +16,10 @@ import com.pocketdl.app.data.repository.StorageRepository
 import com.pocketdl.app.download.DownloadCoordinator
 import com.pocketdl.app.download.DownloadEngine
 import com.pocketdl.app.download.OkHttpDownloadEngine
+import com.pocketdl.app.core.network.AndroidNetworkConnectivityObserver
+import com.pocketdl.app.core.network.NetworkConnectivityObserver
+import com.pocketdl.app.core.storage.DefaultStorageSpaceChecker
+import com.pocketdl.app.core.storage.StorageSpaceChecker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import okhttp3.OkHttpClient
@@ -33,6 +37,8 @@ interface AppContainer {
     val storageRepository: StorageRepository
     val downloadEngine: DownloadEngine
     val downloadCoordinator: DownloadCoordinator
+    val networkConnectivityObserver: NetworkConnectivityObserver
+    val storageSpaceChecker: StorageSpaceChecker
 }
 
 /**
@@ -50,6 +56,14 @@ class DefaultAppContainer(
         DefaultDispatcherProvider()
     }
 
+    override val networkConnectivityObserver: NetworkConnectivityObserver by lazy {
+        AndroidNetworkConnectivityObserver(applicationContext)
+    }
+
+    override val storageSpaceChecker: StorageSpaceChecker by lazy {
+        DefaultStorageSpaceChecker()
+    }
+
     private val okHttpClient: OkHttpClient by lazy {
         OkHttpDownloadEngine.defaultClient()
     }
@@ -57,7 +71,8 @@ class DefaultAppContainer(
     override val downloadEngine: DownloadEngine by lazy {
         OkHttpDownloadEngine(
             client = okHttpClient,
-            ioDispatcher = dispatchers.io
+            ioDispatcher = dispatchers.io,
+            storageChecker = storageSpaceChecker
         )
     }
 
@@ -81,7 +96,9 @@ class DefaultAppContainer(
             },
             coordinatorScope = CoroutineScope(SupervisorJob() + dispatchers.io),
             ioDispatcher = dispatchers.io,
-            applicationContext = applicationContext
+            applicationContext = applicationContext,
+            networkObserver = networkConnectivityObserver,
+            storageChecker = storageSpaceChecker
         )
     }
 
