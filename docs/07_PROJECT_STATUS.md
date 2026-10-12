@@ -16,11 +16,11 @@
 
 **Primary stack:** Kotlin + Jetpack Compose
 
-**Current Phase:** Phase 8 — Download Manager Hardening / IN PROGRESS (Checkpoint 8.2 COMPLETED)
+**Current Phase:** Phase 8 — Download Manager Hardening / IN PROGRESS (Checkpoint 8.3 COMPLETED)
 
-**Status:** CHECKPOINT 8.2 COMPLETED. RESTART RECOVERY & RETRY BUDGET VERIFIED. READY FOR CHECKPOINT 8.3 (NETWORK & STORAGE CONSTRAINTS).
+**Status:** CHECKPOINT 8.3 COMPLETED. NETWORK CONSTRAINTS, STORAGE CHECKS & DISCONNECTION RECOVERY VERIFIED (118/118 TESTS PASSING).
 
-**Last updated:** 2026-10-11
+**Last updated:** 2026-10-12
 
 ---
 
@@ -94,6 +94,7 @@ pocketdl-native/
     └── handoffs/
         ├── CHECKPOINT_8.1_HANDOFF.md
         ├── CHECKPOINT_8.2_HANDOFF.md
+        ├── CHECKPOINT_8.3_HANDOFF.md
         ├── PHASE_1_HANDOFF.md
         ├── PHASE_2_HANDOFF.md
         ├── PHASE_3_HANDOFF.md
@@ -140,8 +141,8 @@ pocketdl-native/
 
 - Installed/configured: **VERIFIED**
 - Gradle build (`assembleDebug`): **VERIFIED SUCCESSFUL**
-- Automated tests (`./gradlew testDebugUnitTest`): **PASSING (100% pass rate: 99 tests passing)**
-- Device Run/Verification: **VERIFIED on physical connected Samsung Galaxy S22 Ultra (`SM-S908E`, `RZCT92A9L3E`) via ADB fresh install (`versionCode=3`, `versionName=1.0.0-p8.2` confirmed via dumpsys package; clean app launch confirmed; Settings screen visibly confirmed displaying `PocketDL v1.0.0-p8.2 (3)`).**
+- Automated tests (`./gradlew testDebugUnitTest`): **PASSING (100% pass rate: 118 tests passing)**
+- Device Run/Verification: **VERIFIED on physical connected Samsung Galaxy S22 Ultra (`SM-S908E`, `RZCT92A9L3E`) via ADB streamed install (`versionCode=4`, `versionName=1.0.0-p8.3` confirmed via dumpsys package; clean app launch confirmed with PID 12159; Settings screen visibly confirmed displaying `PocketDL v1.0.0-p8.3 (4)`; Allow Cellular Downloads toggle interactively verified).**
 
 ---
 
@@ -158,7 +159,7 @@ pocketdl-native/
 | 7 | Background Execution + Notifications | COMPLETED |
 | 8.1 | Concurrency & Worker Hardening | COMPLETED |
 | 8.2 | Restart Recovery & Retry Budget | COMPLETED |
-| 8.3 | Network & Storage Constraints | NEXT UP |
+| 8.3 | Network & Storage Constraints | COMPLETED |
 | 9 | Extension Capture Protocol | NOT STARTED |
 | 10 | Real Browser Extension Integration | NOT STARTED |
 | 11 | HLS Support | NOT STARTED |
@@ -173,4 +174,4 @@ pocketdl-native/
 
 ## Next Action
 
-Proceed to **Checkpoint 8.3 — Network & Storage Constraints** (metered network toggles, storage space pre-checks before download, and network disconnect recovery).
+Proceed to **Phase 9 — Extension Capture Protocol** or further Phase 8 hardening as planned.
