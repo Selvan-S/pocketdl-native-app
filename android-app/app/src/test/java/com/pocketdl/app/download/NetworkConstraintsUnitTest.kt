@@ -124,6 +124,7 @@ class NetworkConstraintsUnitTest {
 
         assertEquals("No workers should be active when offline", 0, coordinator.activeJobsCount.value)
         assertEquals(TaskStatus.QUEUED.name, fakeDao.findById("task_1")?.status)
+        assertEquals("Waiting for Network", fakeDao.findById("task_1")?.statusText)
     }
 
     @Test
@@ -148,6 +149,7 @@ class NetworkConstraintsUnitTest {
 
         assertEquals("No workers should dispatch on metered network without cellular permission", 0, coordinator.activeJobsCount.value)
         assertEquals(TaskStatus.QUEUED.name, fakeDao.findById("task_metered")?.status)
+        assertEquals("Waiting for an unmetered network", fakeDao.findById("task_metered")?.statusText)
     }
 
     @Test
@@ -492,6 +494,119 @@ class NetworkConstraintsUnitTest {
         assertTrue(finalizeGate.isCompleted)
         val inDb = fakeDao.findById("t_finalize")
         assertEquals(TaskStatus.COMPLETED.name, inDb?.status)
+    }
+
+    @Test
+    fun dispatchQueue_doesNotClobberActiveRetryTimer() = runTest(testDispatcher) {
+        networkObserver.emitState(NetworkState(isConnected = false, isMetered = false, connectionType = ConnectionType.NONE))
+
+        val coordinator = DownloadCoordinator(
+            engine = fakeEngine,
+            downloadTaskDao = fakeDao,
+            settingsRepository = settingsRepo,
+            destinationDirProvider = { tempDir },
+            coordinatorScope = testScope,
+            ioDispatcher = testDispatcher,
+            networkObserver = networkObserver
+        )
+
+        val now = System.currentTimeMillis()
+        val retryTask = createTask("t_retry").copy(
+            status = TaskStatus.QUEUED.name,
+            statusText = "Retrying in 10s",
+            nextRetryAt = now + 10_000L,
+            retryCount = 1
+        )
+        fakeDao.insert(retryTask)
+
+        coordinator.dispatchQueue()
+        advanceUntilIdle()
+
+        val afterDispatch = fakeDao.findById("t_retry")
+        assertEquals("Retrying in 10s", afterDispatch?.statusText)
+        assertEquals(now + 10_000L, afterDispatch?.nextRetryAt)
+    }
+
+    @Test
+    fun networkObserver_coldStartPermitted_dispatchesQueuedTaskOnDispatch() = runTest(testDispatcher) {
+        // Cold start: network is already connected and permitted
+        networkObserver.emitState(NetworkState(isConnected = true, isMetered = false, connectionType = ConnectionType.WIFI))
+
+        val task = createTask("t_cold_start")
+        fakeDao.insert(task)
+
+        val coordinator = DownloadCoordinator(
+            engine = fakeEngine,
+            downloadTaskDao = fakeDao,
+            settingsRepository = settingsRepo,
+            destinationDirProvider = { tempDir },
+            coordinatorScope = testScope,
+            ioDispatcher = testDispatcher,
+            networkObserver = networkObserver
+        )
+
+        coordinator.dispatchQueue()
+        advanceUntilIdle()
+
+        assertEquals(1, coordinator.activeJobsCount.value)
+        assertTrue(coordinator.isRunning("t_cold_start"))
+    }
+
+    @Test
+    fun networkObserver_coldStartNonPermitted_marksQueuedTaskWaiting() = runTest(testDispatcher) {
+        // Cold start: metered connection without cellular permission
+        networkObserver.emitState(NetworkState(isConnected = true, isMetered = true, connectionType = ConnectionType.CELLULAR))
+
+        val task = createTask("t_cold_metered")
+        fakeDao.insert(task)
+
+        val coordinator = DownloadCoordinator(
+            engine = fakeEngine,
+            downloadTaskDao = fakeDao,
+            settingsRepository = settingsRepo,
+            destinationDirProvider = { tempDir },
+            coordinatorScope = testScope,
+            ioDispatcher = testDispatcher,
+            networkObserver = networkObserver
+        )
+
+        advanceUntilIdle()
+
+        assertEquals(0, coordinator.activeJobsCount.value)
+        val inDb = fakeDao.findById("t_cold_metered")
+        assertEquals(TaskStatus.QUEUED.name, inDb?.status)
+        assertEquals("Waiting for an unmetered network", inDb?.statusText)
+    }
+
+    @Test
+    fun dispatchQueue_repeatedNetworkChanges_noDuplicateWorkers() = runTest(testDispatcher) {
+        settingsRepo.setAllowCellular(true)
+        networkObserver.emitState(NetworkState(isConnected = true, isMetered = true, connectionType = ConnectionType.CELLULAR))
+
+        val coordinator = DownloadCoordinator(
+            engine = fakeEngine,
+            downloadTaskDao = fakeDao,
+            settingsRepository = settingsRepo,
+            destinationDirProvider = { tempDir },
+            coordinatorScope = testScope,
+            ioDispatcher = testDispatcher,
+            networkObserver = networkObserver
+        )
+
+        val task = createTask("t_repeat")
+        fakeDao.insert(task)
+        coordinator.dispatchQueue()
+        advanceUntilIdle()
+
+        assertEquals(1, coordinator.activeJobsCount.value)
+
+        // Multiple rapid dispatches and network updates while task is active
+        coordinator.dispatchQueue()
+        coordinator.dispatchQueue()
+        networkObserver.emitState(NetworkState(isConnected = true, isMetered = true, connectionType = ConnectionType.CELLULAR))
+        advanceUntilIdle()
+
+        assertEquals("Should still have exactly 1 active worker", 1, coordinator.activeJobsCount.value)
     }
 
     // --- In-memory test doubles ---

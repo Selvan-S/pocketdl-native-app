@@ -12,6 +12,8 @@ import androidx.core.app.NotificationManagerCompat
 import com.pocketdl.app.MainActivity
 import com.pocketdl.app.download.service.DownloadActionReceiver
 
+import com.pocketdl.app.core.logging.AppLogger
+
 /**
  * Handles creation of notification channels, ongoing progress notifications,
  * completion alerts, and failure notifications for PocketDL downloads.
@@ -20,25 +22,44 @@ class DownloadNotificationManager(
     private val context: Context
 ) {
     init {
-        createNotificationChannel()
+        createNotificationChannels()
     }
 
     /**
-     * Registers the notification channel required for Android O (API 26) and above.
+     * Registers notification channels required for Android O (API 26) and above.
      */
-    fun createNotificationChannel() {
+    fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                CHANNEL_NAME,
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+
+            val ongoingChannel = NotificationChannel(
+                CHANNEL_ID_ONGOING,
+                CHANNEL_NAME_ONGOING,
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = CHANNEL_DESCRIPTION
+                description = CHANNEL_DESCRIPTION_ONGOING
                 setShowBadge(false)
             }
-            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-            manager?.createNotificationChannel(channel)
+
+            val alertsChannel = NotificationChannel(
+                CHANNEL_ID_ALERTS,
+                CHANNEL_NAME_ALERTS,
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = CHANNEL_DESCRIPTION_ALERTS
+                setShowBadge(true)
+            }
+
+            manager.createNotificationChannel(ongoingChannel)
+            manager.createNotificationChannel(alertsChannel)
         }
+    }
+
+    /**
+     * Compatibility overload for legacy single-channel calls.
+     */
+    fun createNotificationChannel() {
+        createNotificationChannels()
     }
 
     /**
@@ -172,7 +193,7 @@ class DownloadNotificationManager(
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        return NotificationCompat.Builder(context, CHANNEL_ID)
+        return NotificationCompat.Builder(context, CHANNEL_ID_ALERTS)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentTitle("Download Completed")
             .setContentText(title)
@@ -196,7 +217,7 @@ class DownloadNotificationManager(
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        return NotificationCompat.Builder(context, CHANNEL_ID)
+        return NotificationCompat.Builder(context, CHANNEL_ID_ALERTS)
             .setSmallIcon(android.R.drawable.stat_notify_error)
             .setContentTitle("Download Failed")
             .setContentText("$title: $errorMessage")
@@ -207,15 +228,17 @@ class DownloadNotificationManager(
     }
 
     /**
-     * Posts a notification safely. Catches exceptions if notification permissions are denied.
+     * Posts a notification safely. Catches and logs exceptions if notification permissions are denied.
      */
     fun postNotification(notificationId: Int, notification: Notification): Boolean {
         return try {
             NotificationManagerCompat.from(context).notify(notificationId, notification)
             true
-        } catch (_: SecurityException) {
+        } catch (se: SecurityException) {
+            AppLogger.w(TAG, "Notification permission denied for id $notificationId: ${se.message}")
             false
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Failed to post notification $notificationId: ${e.message}", e)
             false
         }
     }
@@ -232,9 +255,21 @@ class DownloadNotificationManager(
     }
 
     companion object {
-        const val CHANNEL_ID = "pocketdl_downloads"
-        const val CHANNEL_NAME = "Active Downloads"
-        const val CHANNEL_DESCRIPTION = "Shows progress and status of PocketDL active media downloads"
+        private const val TAG = "DownloadNotificationManager"
+
+        const val CHANNEL_ID_ONGOING = "pocketdl_downloads"
+        const val CHANNEL_NAME_ONGOING = "Active Downloads"
+        const val CHANNEL_DESCRIPTION_ONGOING = "Shows progress and status of PocketDL active media downloads"
+
+        const val CHANNEL_ID_ALERTS = "pocketdl_alerts"
+        const val CHANNEL_NAME_ALERTS = "Download Alerts"
+        const val CHANNEL_DESCRIPTION_ALERTS = "Notifies when media downloads complete or fail"
+
+        // Backwards compatibility aliases
+        const val CHANNEL_ID = CHANNEL_ID_ONGOING
+        const val CHANNEL_NAME = CHANNEL_NAME_ONGOING
+        const val CHANNEL_DESCRIPTION = CHANNEL_DESCRIPTION_ONGOING
+
         const val ONGOING_NOTIFICATION_ID = 1001
     }
 }

@@ -84,6 +84,10 @@ open class DownloadCoordinator(
     private val _serviceForegroundState = MutableStateFlow<ServiceForegroundResult>(ServiceForegroundResult.Idle)
     val serviceForegroundState: StateFlow<ServiceForegroundResult> = _serviceForegroundState.asStateFlow()
 
+    private val initializationJob: Job = coordinatorScope.launch(ioDispatcher) {
+        reconcileStartupStateInternal()
+    }
+
     init {
         coordinatorScope.coroutineContext[Job]?.invokeOnCompletion {
             cleanupScope.launch(NonCancellable) {
@@ -112,10 +116,6 @@ open class DownloadCoordinator(
                 handleNetworkOrSettingsChange(netState, allowCellular)
             }
         }
-    }
-
-    private val initializationJob: Job = coordinatorScope.launch(ioDispatcher) {
-        reconcileStartupStateInternal()
     }
 
     /**
@@ -189,13 +189,24 @@ open class DownloadCoordinator(
             }
             if (shouldEnqueue) {
                 downloadTaskDao.resetRetryState(taskId) // Reset timer and counters
+                val netState = networkObserver.currentNetworkState()
+                val allowCellular = try {
+                    settingsRepository.observeSettings().first().allowCellular
+                } catch (_: Exception) {
+                    false
+                }
+                val initialReason = if (!isNetworkPermitted(netState, allowCellular)) {
+                    getConstraintReason(netState)
+                } else {
+                    "Queued"
+                }
                 if (task.status != TaskStatus.DOWNLOADING.name) {
                     downloadTaskDao.updateStatus(
                         id = taskId,
                         status = TaskStatus.QUEUED.name,
-                        statusText = "Queued",
+                        statusText = initialReason,
                         speedText = "Waiting",
-                        etaText = "In Queue"
+                        etaText = if (initialReason == "Queued") "In Queue" else "Waiting"
                     )
                 }
             }
@@ -228,6 +239,7 @@ open class DownloadCoordinator(
             if (!permitted) {
                 val reason = getConstraintReason(netState)
                 interruptActiveWorkersForConstraint(reason)
+                updateWaitingQueuedTasksReason(reason)
             }
             return
         }
@@ -236,6 +248,7 @@ open class DownloadCoordinator(
             if (!permitted) {
                 val reason = getConstraintReason(netState)
                 interruptActiveWorkersForConstraint(reason)
+                updateWaitingQueuedTasksReason(reason)
             } else {
                 dispatchQueueInternal()
             }
@@ -284,6 +297,40 @@ open class DownloadCoordinator(
         }
     }
 
+    private suspend fun updateWaitingQueuedTasksReason(reason: String) {
+        val candidates = downloadTaskDao.findOldestQueued(50)
+        val now = System.currentTimeMillis()
+        for (task in candidates) {
+            val isBackingOff = task.nextRetryAt != null && task.nextRetryAt > now
+            if (!isBackingOff && task.statusText != reason) {
+                downloadTaskDao.updateStatus(
+                    id = task.id,
+                    status = TaskStatus.QUEUED.name,
+                    statusText = reason,
+                    speedText = "0 KB/s",
+                    etaText = "Waiting"
+                )
+            }
+        }
+    }
+
+    private suspend fun resetQueuedTasksFromNetworkWaiting() {
+        val candidates = downloadTaskDao.findOldestQueued(50)
+        val now = System.currentTimeMillis()
+        for (task in candidates) {
+            val isBackingOff = task.nextRetryAt != null && task.nextRetryAt > now
+            if (!isBackingOff && (task.statusText == "Waiting for Network" || task.statusText == "Waiting for an unmetered network")) {
+                downloadTaskDao.updateStatus(
+                    id = task.id,
+                    status = TaskStatus.QUEUED.name,
+                    statusText = "Queued",
+                    speedText = "Waiting",
+                    etaText = "In Queue"
+                )
+            }
+        }
+    }
+
     /**
      * Dispatches queued tasks up to available maxParallel capacity.
      */
@@ -302,7 +349,13 @@ open class DownloadCoordinator(
         } catch (_: Exception) {
             false
         }
-        if (!isNetworkPermitted(netState, allowCellular)) return
+        if (!isNetworkPermitted(netState, allowCellular)) {
+            val reason = getConstraintReason(netState)
+            updateWaitingQueuedTasksReason(reason)
+            return
+        }
+
+        resetQueuedTasksFromNetworkWaiting()
 
         val (availableSlots, fetchLimit) = mutex.withLock {
             val maxParallel = getMaxParallel()
