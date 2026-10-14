@@ -108,34 +108,65 @@ Total passing unit tests: **118 tests** (100% pass rate, 0 failures, 0 skipped).
 7. `storageSafetyBuffer_preservesDatabaseWritingHeadroom`
 8. `storagePolicy_parseBytesFromText_parsesVariousFormatsCorrectly`
 
+### Checkpoint 8.3 Reliability & Notification Tests:
+1. `NetworkConstraintsUnitTest.dispatchQueue_doesNotClobberActiveRetryTimer`
+2. `NetworkConstraintsUnitTest.networkObserver_coldStartPermitted_dispatchesQueuedTaskOnDispatch`
+3. `NetworkConstraintsUnitTest.networkObserver_coldStartNonPermitted_marksQueuedTaskWaiting`
+4. `NetworkConstraintsUnitTest.dispatchQueue_repeatedNetworkChanges_noDuplicateWorkers`
+5. `DownloadNotificationManagerUnitTest.constants_verifyChannelConfigurationValues` (Dual channel IDs and importance)
+
 ---
 
-## 4. Verification & Build Results
+## 4. Notification & Network-Waiting Reliability Fix
+
+Following initial Checkpoint 8.3 verification, physical-device testing on the Samsung Galaxy S22 Ultra (Android 14) identified that download notifications were not appearing and network-waiting status needed refinement. A targeted reliability fix was implemented:
+
+1. **Dual-Channel Notification Architecture:**
+   - Separated notification delivery into two dedicated channels:
+     - `pocketdl_downloads` (`IMPORTANCE_LOW`): Silent ongoing notification for active download progress and foreground service lifecycle.
+     - `pocketdl_alerts` (`IMPORTANCE_DEFAULT`): Visible and audible alerts for completed and failed downloads.
+   - Channels are registered at application startup via `PocketDlApplication.onCreate()`.
+   - Completion and failure notifications are routed to `pocketdl_alerts`.
+
+2. **Android 13+ Runtime Notification Permissions:**
+   - Added runtime `POST_NOTIFICATIONS` permission launcher in `MainActivity`.
+   - Prompts user once per install on API 33+ and records state in SharedPreferences (`notif_permission_requested`) to prevent repeated prompts.
+
+3. **Coordinator Concurrency & Network-Waiting Fixes:**
+   - Fixed Kotlin property declaration order race condition: moved `initializationJob` declaration before `init { ... }` block to eliminate a multicore `NullPointerException` on `initializationJob.join()`.
+   - Preserves `QUEUED` task state while setting statusText to `"Waiting for Network"` or `"Waiting for an unmetered network"` when network conditions disallow downloading.
+   - Does not overwrite or clobber active backoff retry timers (`nextRetryAt > now`).
+   - Automatically resets network-waiting tasks to `"Queued"` when network conditions become permitted.
+   - Correctly observes initial network state on cold start without spurious auto-dispatch.
+
+---
+
+## 5. Verification & Build Results
 
 - **Unit Test Execution:**
   - Command: `.\gradlew.bat testDebugUnitTest`
-  - Result: **BUILD SUCCESSFUL in 35s** (118 tests passed, 0 failures, 0 skipped across 17 test suites).
+  - Result: **BUILD SUCCESSFUL** (122 tests passed, 0 failures, 0 skipped across 17 test suites).
 - **Debug APK Assembly:**
   - Command: `.\gradlew.bat assembleDebug`
-  - Result: **BUILD SUCCESSFUL in 32s** (`app-debug.apk` built).
+  - Result: **BUILD SUCCESSFUL** (`app-debug.apk` built).
 - **Physical Device Verification:**
-  - **Device:** Samsung Galaxy S22 Ultra (`SM-S908E`, ADB device `RZCT92A9L3E`).
-  - **Install Method:** Streamed ADB install (`adb -s RZCT92A9L3E install -r android-app\app\build\outputs\apk\debug\app-debug.apk`).
-  - **Package Dump:** Verified `versionCode=4`, `versionName=1.0.0-p8.3` via `dumpsys package`.
-  - **App Launch:** Started `MainActivity` cleanly (PID `12159`), zero fatal exceptions or crashes in Logcat.
-  - **Settings Verification:** Navigated to Settings; screen visibly displays `PocketDL v1.0.0-p8.3 (4)`.
-  - **Interactive Testing:** Exercised "Allow Cellular Downloads" switch toggle on device; state transitions and persists reactively.
-  - **UI Verification:** Captured and inspected device screenshots for Home and Settings screens.
+  - **Device:** Samsung Galaxy S22 Ultra (`SM-S908E`, ADB device `RZCT92A9L3E`, Android 14).
+  - **Permissions:** Verified `POST_NOTIFICATIONS` granted (`granted=true`).
+  - **Channels:** Verified dual channels registered in Android notification manager (`pocketdl_downloads` with `mImportance=2`, `pocketdl_alerts` with `mImportance=3`).
+  - **Network-Constrained Queue:** Verified on 5G cellular network with `allowCellular = false`. Enqueued download entered `QUEUED` state with statusText `"Waiting for an unmetered network"`.
+  - **Reactive Dispatch:** Toggling "Allow Cellular Downloads" to enabled immediately triggered coordinator network transition, reset status to `"Queued"`, and dispatched worker.
+  - **Notification Delivery:** Verified in dumpsys notification and visual notification shade screenshot (`screen_shade_now.png`) that alerts appear cleanly in the user's notification shade.
 
 ---
 
-## 5. Scope Boundaries
+## 6. Scope Boundaries
 
-- **Room Schema Version:** Remained at Room version 3 (no schema migration required; existing columns `status`, `status_text`, `retry_count`, `next_retry_at` were reused).
-- **Out of Scope Exclusions:** Clipboard monitoring, media-sniffing, YouTube extraction, quality-selection redesign, and navigation fixes were strictly excluded from this checkpoint.
+- **Room Schema Version:** Remained strictly at Room version 3 (no migrations, entities unchanged).
+- **Out of Scope Exclusions:** Clipboard monitoring, real media sniffer/extractor, YouTube extraction, quality selection redesign, and download directory settings were strictly excluded.
 
 ---
 
-## 6. Next Step
+## 7. Next Step
 
-Proceed to **Phase 9: Extension Capture Protocol** or **Checkpoint 8.4** hardening as prioritized in the development plan.
+Proceed to **Phase 9: Extension Capture Protocol** after user review.
+

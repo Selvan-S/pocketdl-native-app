@@ -16,11 +16,11 @@
 
 **Primary stack:** Kotlin + Jetpack Compose
 
-**Current Phase:** Phase 8 — Download Manager Hardening / IN PROGRESS (Checkpoint 8.3 COMPLETED)
+**Current Phase:** Phase 8 — Download Manager Hardening / IN PROGRESS (Checkpoint 8.3 COMPLETED & HARDENED)
 
-**Status:** CHECKPOINT 8.3 COMPLETED. NETWORK CONSTRAINTS, STORAGE CHECKS & DISCONNECTION RECOVERY VERIFIED (118/118 TESTS PASSING).
+**Status:** CHECKPOINT 8.3 COMPLETED. NETWORK CONSTRAINTS, STORAGE CHECKS, NOTIFICATION ROUTING & DISCONNECTION RECOVERY VERIFIED (122/122 TESTS PASSING).
 
-**Last updated:** 2026-10-12
+**Last updated:** 2026-10-14
 
 ---
 
@@ -141,8 +141,8 @@ pocketdl-native/
 
 - Installed/configured: **VERIFIED**
 - Gradle build (`assembleDebug`): **VERIFIED SUCCESSFUL**
-- Automated tests (`./gradlew testDebugUnitTest`): **PASSING (100% pass rate: 118 tests passing)**
-- Device Run/Verification: **VERIFIED on physical connected Samsung Galaxy S22 Ultra (`SM-S908E`, `RZCT92A9L3E`) via ADB streamed install (`versionCode=4`, `versionName=1.0.0-p8.3` confirmed via dumpsys package; clean app launch confirmed with PID 12159; Settings screen visibly confirmed displaying `PocketDL v1.0.0-p8.3 (4)`; Allow Cellular Downloads toggle interactively verified).**
+- Automated tests (`./gradlew testDebugUnitTest`): **PASSING (100% pass rate: 122 tests passing)**
+- Device Run/Verification: **VERIFIED on physical connected Samsung Galaxy S22 Ultra (`SM-S908E`, `RZCT92A9L3E`, Android 14) via ADB streamed install (`versionCode=4`, `versionName=1.0.0-p8.3` confirmed via dumpsys package; clean app launch confirmed; Settings screen visibly confirmed displaying `PocketDL v1.0.0-p8.3 (4)`; Allow Cellular Downloads toggle interactively verified; dual notification channels registered; runtime POST_NOTIFICATIONS granted; network-waiting and notification delivery confirmed in notification shade).**
 
 ---
 
